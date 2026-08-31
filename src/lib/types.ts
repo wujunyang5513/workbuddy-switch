@@ -91,6 +91,35 @@ export interface CopyResult {
   backup: string;
 }
 
+/** 一组重复会话（去重预览/执行共用）。 */
+export interface DupGroup {
+  lastActivityAt: number;
+  title: string;
+  cwd: string;
+  count: number;
+  keepId: string;
+  dupIds: string[];
+}
+
+export interface DedupPreviewResult {
+  ok: boolean;
+  error?: string;
+  uid?: string | null;
+  groups: DupGroup[];
+  totalGroups: number;
+  totalToDelete: number;
+}
+
+export interface DedupExecuteResult {
+  ok: boolean;
+  error?: string;
+  uid?: string | null;
+  deleted?: number;
+  totalGroups?: number;
+  totalToDelete?: number;
+  message?: string;
+}
+
 export interface SwitchResult {
   ok: boolean;
   account: string;
@@ -100,6 +129,14 @@ export interface SwitchResult {
     targetUid: string;
     copied: CopyResult[];
     errors?: { id: string; error: string }[];
+  };
+  sessionMigrate?: {
+    sourceUid: string;
+    targetUid: string;
+    backup: string;
+    migrated: { id: string; migrated: true; mappingRekeyed: boolean }[];
+    skipped: { id: string; reason: string }[];
+    errors: { id: string; error: string }[];
   };
 }
 
@@ -373,4 +410,69 @@ export interface UpdateInfo {
   publishedAt?: string;
   error?: string;
   message?: string;
+}
+
+/** 猫猫旅行状态（脱敏，来自 /activity/growth/buddy/travel/status）。 */
+export interface TravelState {
+  ok: boolean;
+  state?: string;
+  buddyName?: string;
+  locationId?: number | null;
+  locationCode?: string;
+  locationName?: string;
+  arriveAt?: number | null;
+  serverNow?: number | null;
+  rewardCredit?: number | null;
+  dailyLimitReached?: boolean;
+  hasLetter?: boolean;
+  arrived?: boolean;
+  error?: string;
+}
+
+export interface TravelStatus {
+  accountId: string;
+  email: string;
+  travel: TravelState;
+}
+
+export interface TravelActionResult {
+  ok: boolean;
+  email?: string;
+  skipped?: boolean;
+  reason?: string;
+  locationId?: number;
+  locationName?: string;
+  rewardCredit?: number | null;
+  hasLetter?: boolean;
+  error?: string;
+  raw?: unknown;
+}
+
+/** 旅行自动执行配置。 */
+export interface TravelAutoConfig {
+  enabled: boolean;
+  /** 每天自动「一键派遣全部」的时间点，格式 HH:MM（24 小时制）。 */
+  depart_time: string;
+  /** 每天自动「一键领取全部」的时间点，格式 HH:MM（24 小时制）。 */
+  claim_time: string;
+}
+
+/** 一次旅行批量操作日志。 */
+export interface TravelLog {
+  ts: number;
+  /** "depart" | "claim" */
+  kind: string;
+  /** "manual" | "auto" */
+  trigger: string;
+  summary: TravelBatchResult;
+}
+
+/** 一键派遣/领取全部的汇总结果。 */
+export interface TravelBatchResult {
+  kind: string;
+  total: number;
+  ok: number;
+  skipped: number;
+  failed: number;
+  accounts: TravelActionResult[];
 }

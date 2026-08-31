@@ -309,6 +309,15 @@ async fn api_switch(Json(body): Json<Value>) -> Response {
                 .collect()
         })
         .unwrap_or_default();
+    let migrate_ids: Vec<String> = body
+        .get("migrateSessionIds")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
 
     {
         let mut running = SWITCH_RUNNING.lock().unwrap();
@@ -330,6 +339,7 @@ async fn api_switch(Json(body): Json<Value>) -> Response {
             restart,
             share_sessions,
             &copy_ids,
+            &migrate_ids,
         )
     })
     .await;

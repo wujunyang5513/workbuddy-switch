@@ -14,13 +14,20 @@ use crate::modules::session;
 /// 切换进度回调（宿主注入，如 Tauri `app.emit` 或 HTTP 进度缓存）。
 pub type ProgressFn = Box<dyn Fn(&str) + Send + Sync>;
 
-/// 切换账号。copy_session_ids 非空时按路径 B 复制勾选会话（新 id，云端可同步）。
+/// 切换账号。
+///   - `restart=true` 时关进程后做会话处理（数据库在运行中不宜写入）
+///   - `migrate_session_ids` 与 `copy_session_ids` 二选一：
+///       · `migrate_session_ids` 非空 → 走路径 A（UPDATE 改归属，不会产生重复）
+///       · `copy_session_ids`    非空 → 走路径 B（INSERT 新 id，云端归属目标）
+///       · 两者都非空时，优先 migrate（向「不产生重复」靠拢）
+///   - `share_sessions=true` → 旧的「全体转移」兼容路径（默认关闭）
 pub fn switch_account(
     progress_fn: Option<&ProgressFn>,
     account_id: &str,
     restart: bool,
     share_sessions: bool,
     copy_session_ids: &[String],
+    migrate_session_ids: &[String],
 ) -> Result<Value, String> {
     let progress = |message: &str| {
         eprintln!("[switch] progress: {message}");
@@ -34,14 +41,18 @@ pub fn switch_account(
         account::find_account(account_id).ok_or_else(|| format!("账号不存在: {account_id}"))?;
     let backup = auth_file::backup_auth_file();
 
+    let mut migrate_report: Option<Value> = None;
     let mut copy_report: Option<Value> = None;
     let mut session_report: Option<Value> = None;
     if restart {
         progress("正在关闭 WorkBuddy…");
         close_workbuddy(20)?;
         // 只有重启场景才做会话操作（数据库在运行中不宜写入）
-        if !copy_session_ids.is_empty() {
-            progress("正在复制会话到目标账号…");
+        if !migrate_session_ids.is_empty() {
+            progress("正在迁移会话到目标账号（UPDATE 改归属）…");
+            migrate_report = session::migrate_sessions_for_switch(&acc, migrate_session_ids);
+        } else if !copy_session_ids.is_empty() {
+            progress("正在复制会话到目标账号（INSERT 新 id）…");
             copy_report = session::copy_sessions_for_switch(&acc, copy_session_ids);
         }
         if share_sessions {
@@ -62,6 +73,9 @@ pub fn switch_account(
         "account": account::account_display_name(&acc),
         "backup": backup.map(|p| p.to_string_lossy().to_string()),
     });
+    if let Some(m) = migrate_report {
+        result["sessionMigrate"] = m;
+    }
     if let Some(c) = copy_report {
         result["sessionCopy"] = c;
     }

@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { BrowserRouter, HashRouter, Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
-import { ArrowUpCircle, ChartBar, Loader2, Settings, User } from "lucide-react";
+import { ArrowUpCircle, ChartBar, CopyX, Loader2, Settings, User, PlaneTakeoff } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import * as api from "@/lib/api";
 import type { UpdateInfo } from "@/lib/types";
 import AccountsPage from "@/pages/AccountsPage";
 import CreditStatsPage from "@/pages/CreditStatsPage";
+import DedupPage from "@/pages/DedupPage";
 import SettingsPage from "@/pages/SettingsPage";
+import TravelPage from "@/pages/TravelPage";
 import { StatusDot, AppIconMark } from "@/components/product-marks";
 import { UpdateInstallDialog } from "@/components/update-install-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -155,6 +157,34 @@ function Layout() {
             积分统计
           </NavLink>
           <NavLink
+            to="/travel"
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
+                isActive
+                  ? "bg-foreground/[0.06] font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
+              )
+            }
+          >
+            <PlaneTakeoff className="size-4" />
+            猫猫旅行
+          </NavLink>
+          <NavLink
+            to="/dedup"
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
+                isActive
+                  ? "bg-foreground/[0.06] font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
+              )
+            }
+          >
+            <CopyX className="size-4" />
+            会话去重
+          </NavLink>
+          <NavLink
             to="/settings"
             className={({ isActive }) =>
               cn(
@@ -193,6 +223,8 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<AccountsPage />} />
             <Route path="/credit-stats" element={<CreditStatsPage />} />
+            <Route path="/travel" element={<TravelPage />} />
+            <Route path="/dedup" element={<DedupPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

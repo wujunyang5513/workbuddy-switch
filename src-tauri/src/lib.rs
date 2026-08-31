@@ -56,6 +56,40 @@ fn spawn_background_loops() {
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
     });
+
+    // 猫猫旅行自动执行：每天在配置的时间点分别执行「一键派遣全部」与「一键领取全部」。
+    tauri::async_runtime::spawn(async move {
+        let mut last_depart_day = String::new();
+        let mut last_claim_day = String::new();
+        loop {
+            let travel_cfg = modules::config::load_travel_config();
+            if travel_cfg.get("enabled").and_then(|v| v.as_bool()) == Some(true) {
+                let today = modules::checkin::date_str(None);
+                let hhmm = modules::config::local_hhmm();
+                let depart_time = travel_cfg
+                    .get("depart_time")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("08:00")
+                    .to_string();
+                let claim_time = travel_cfg
+                    .get("claim_time")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("20:00")
+                    .to_string();
+                // 到达 / 超过 派遣时间点且当天尚未执行 → 派遣全部
+                if hhmm.as_str() >= depart_time.as_str() && last_depart_day != today {
+                    last_depart_day = today.clone();
+                    let _ = modules::travel::depart_all_for(0, "auto").await;
+                }
+                // 到达 / 超过 领取时间点且当天尚未执行 → 领取全部
+                if hhmm.as_str() >= claim_time.as_str() && last_claim_day != today {
+                    last_claim_day = today.clone();
+                    let _ = modules::travel::claim_all_for("auto").await;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -110,6 +144,8 @@ pub fn run() {
             commands::switch_account,
             commands::list_sessions,
             commands::copy_sessions,
+            commands::dedup_preview,
+            commands::dedup_execute,
             commands::open_permission_settings,
             commands::check_auth_permission,
             commands::reveal_app_in_finder,
@@ -133,6 +169,14 @@ pub fn run() {
             commands::relaunch_app,
             commands::get_launch_at_login_enabled,
             commands::set_launch_at_login_enabled,
+            commands::get_travel_status,
+            commands::depart_travel,
+            commands::claim_travel,
+            commands::depart_all_travels,
+            commands::claim_all_travels,
+            commands::get_travel_auto_config,
+            commands::save_travel_auto_config,
+            commands::get_travel_logs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

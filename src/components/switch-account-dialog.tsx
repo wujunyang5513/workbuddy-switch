@@ -27,11 +27,11 @@ interface Props {
   onDone?: () => void;
 }
 
-/** 切换账号弹窗：可勾选当前账号的会话复制到目标账号（路径 B）。 */
+/** 切换账号弹窗：可勾选当前账号的会话迁移到目标账号（路径 A：UPDATE 改归属，不产生重复）。 */
 export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Props) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
-  const [copySessions, setCopySessions] = useState(false);
+  const [migrateSessions, setMigrateSessions] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   /** 展开的节点：任务 / 空间 / 文件夹。默认全部收起。 */
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -65,7 +65,7 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
   // 打开时加载当前账号会话
   useEffect(() => {
     if (open && account) {
-      setCopySessions(false);
+      setMigrateSessions(false);
       setSelected(new Set());
       setExpanded(new Set());
       setError("");
@@ -118,7 +118,7 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
     try {
       const res = await api.switchAccount({
         accountId: account.id,
-        copySessionIds: copySessions ? [...selected] : undefined,
+        migrateSessionIds: migrateSessions ? [...selected] : undefined,
       });
       setResult(res);
       onDone?.();
@@ -179,18 +179,18 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
     };
   }, [error]);
 
-  const copyCount = copySessions ? selected.size : 0;
+  const migrateCount = migrateSessions ? selected.size : 0;
   const needsPermission = error.includes("无权限");
   const sessionsEmpty = !loadingSessions && sessions.length === 0;
-  const copyHint = loadingSessions
+  const migrateHint = loadingSessions
     ? "正在加载会话…"
     : error && sessionsEmpty
-      ? "无法加载会话列表，暂不能复制"
+      ? "无法加载会话列表，暂不能迁移"
       : sessionsEmpty
         ? currentUid
-          ? "当前账号暂无会话，无法复制"
+          ? "当前账号暂无会话，无法迁移"
           : "未检测到当前登录账号，无法列出会话"
-        : "将当前账号勾选的会话以新 id 复制给目标账号（云端归属目标）";
+        : "将当前账号勾选的会话迁移到目标账号（UPDATE 改归属，不会产生重复，云端归属目标）";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -218,7 +218,7 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
         <div className="min-h-0 space-y-3 overflow-x-hidden overflow-y-auto">
           <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium">复制会话到目标账号</div>
+              <div className="text-sm font-medium">迁移会话到目标账号</div>
               <div
                 className={
                   sessionsEmpty
@@ -226,17 +226,17 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
                     : "text-xs text-muted-foreground"
                 }
               >
-                {copyHint}
+                {migrateHint}
               </div>
             </div>
             <Switch
-              checked={copySessions}
-              onCheckedChange={setCopySessions}
+              checked={migrateSessions}
+              onCheckedChange={setMigrateSessions}
               disabled={loadingSessions || sessions.length === 0}
             />
           </div>
 
-          {copySessions && (
+          {migrateSessions && (
             <>
               <Separator />
               <div className="max-h-[min(20rem,45vh)] overflow-y-auto pr-1">
@@ -386,10 +386,15 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
             <Alert>
               <AlertDescription>
                 已切换至「{result.account}」。
-                {result.sessionCopy
-                  ? ` 已复制 ${result.sessionCopy.copied.length} 个会话`
-                  : ""}
+                {result.sessionMigrate
+                  ? ` 已迁移 ${result.sessionMigrate.migrated.length} 个会话（UPDATE 改归属，原账号已无这些会话）`
+                  : result.sessionCopy
+                    ? ` 已复制 ${result.sessionCopy.copied.length} 个会话`
+                    : ""}
                 {result.backup ? ` 认证文件备份：${result.backup}` : ""}
+                {result.sessionMigrate?.backup
+                  ? ` 会话数据备份：${result.sessionMigrate.backup}`
+                  : ""}
                 {" CodeBuddy CLI 保持原当前账号；如需切换，请在对应账号卡片上单独点击 CLI 切换。"}
               </AlertDescription>
             </Alert>
@@ -401,7 +406,7 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
             取消
           </Button>
           {!result && (
-            <Button onClick={doSwitch} disabled={busy || (copySessions && copyCount === 0)}>
+            <Button onClick={doSwitch} disabled={busy || (migrateSessions && migrateCount === 0)}>
               {busy ? "切换中…" : "确认切换"}
             </Button>
           )}

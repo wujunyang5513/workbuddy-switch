@@ -22,6 +22,14 @@ pub const CHECKIN_API_PREFIX: &str = "/v2/billing/meter";
 pub const CHECKIN_LOG_KEEP_DAYS: i64 = 30;
 pub const CHECKIN_LOG_MAX_RECORDS: usize = 500;
 
+/// 默认 User-Agent。
+///
+/// 2026-08-31 起服务端（www.codebuddy.cn）新增 WAF 规则：拦截不带浏览器
+/// User-Agent 的请求（HTTP 403 / code=10085 "请求不合法"）。reqwest 默认
+/// 不发送 UA，导致积分查询、签到、用量等全部接口被拦；这里统一携带浏览器
+/// UA 模拟官方桌面客户端（Electron）的网络栈。
+pub const HTTP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
 static CHECKIN_LOG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 pub const ROTATE_LOG_MAX_RECORDS: usize = 200;
@@ -72,6 +80,14 @@ pub fn auto_rotate_logs_file() -> PathBuf {
 
 pub fn workbuddy_exe_cache_file() -> PathBuf {
     store_dir().join("workbuddy_exe.json")
+}
+
+pub fn auto_travel_config_file() -> PathBuf {
+    store_dir().join("auto_travel_config.json")
+}
+
+pub fn travel_logs_file() -> PathBuf {
+    store_dir().join("auto_travel_logs.json")
 }
 
 fn parse_workbuddy_exe_cache_json(text: &str) -> Option<PathBuf> {
@@ -403,6 +419,78 @@ pub fn add_rotate_log(entry: &Value) {
 }
 
 // ---------------------------------------------------------------------------
+// 猫猫旅行自动执行配置 / 日志
+// ---------------------------------------------------------------------------
+
+/// 默认旅行自动执行配置。
+///
+/// - `depart_time` 每天自动「一键派遣全部」的时间点（HH:MM，24 小时制）；
+/// - `claim_time` 每天自动「一键领取全部」的时间点；
+/// - `enabled=false` 时关闭自动执行（仍可手动触发）。
+pub fn default_travel_config() -> Value {
+    json!({
+        "enabled": true,
+        "depart_time": "08:00",
+        "claim_time": "20:00",
+    })
+}
+
+/// 读取旅行自动执行配置（缺失/损坏时合并默认值）。
+pub fn load_travel_config() -> Value {
+    let mut cfg = default_travel_config();
+    let f = auto_travel_config_file();
+    if f.exists() {
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) {
+                for (k, v) in map {
+                    cfg[k] = v;
+                }
+            }
+        }
+    }
+    cfg
+}
+
+/// 保存旅行自动执行配置（只保留已知字段）。
+pub fn save_travel_config(cfg: &Value) -> std::io::Result<()> {
+    let mut merged = default_travel_config();
+    let allowed: Vec<&str> = vec!["enabled", "depart_time", "claim_time"];
+    for k in allowed {
+        if let Some(v) = cfg.get(k) {
+            merged[k] = v.clone();
+        }
+    }
+    std::fs::create_dir_all(store_dir())?;
+    let content = serde_json::to_string_pretty(&merged).unwrap_or_default();
+    atomic_write(&auto_travel_config_file(), &content)
+}
+
+/// 读取旅行批量操作日志。
+pub fn load_travel_logs() -> Vec<Value> {
+    let f = travel_logs_file();
+    if f.exists() {
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            if let Ok(Value::Array(arr)) = serde_json::from_str::<Value>(&text) {
+                return arr;
+            }
+        }
+    }
+    vec![]
+}
+
+/// 追加一条旅行批量操作日志（保留最近 200 条）。
+pub fn add_travel_log(entry: &Value) {
+    let mut logs = load_travel_logs();
+    logs.push(entry.clone());
+    if logs.len() > 200 {
+        logs.drain(..logs.len() - 200);
+    }
+    std::fs::create_dir_all(store_dir()).ok();
+    let content = serde_json::to_string_pretty(&logs).unwrap_or_default();
+    let _ = atomic_write(&travel_logs_file(), &content);
+}
+
+// ---------------------------------------------------------------------------
 // 并发运行标志（替代 Python threading.Lock，Send 安全可跨 await）
 // ---------------------------------------------------------------------------
 
@@ -449,6 +537,11 @@ pub fn now_secs() -> i64 {
 pub fn utc_iso() -> String {
     // 对照 Python utc_iso：%Y-%m-%dT%H-%M-%S + "Z"
     format!("{}Z", chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S"))
+}
+
+/// 当前本地时间 "HH:MM"（24 小时制），用于旅行每日自动执行的时间点判断。
+pub fn local_hhmm() -> String {
+    chrono::Local::now().format("%H:%M").to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -499,6 +592,7 @@ static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
+            .user_agent(HTTP_USER_AGENT)
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("failed to build reqwest client")
@@ -531,6 +625,7 @@ pub async fn http_request_with_proxy(
     let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
     let client = match proxy.map(str::trim).filter(|value| !value.is_empty()) {
         Some(proxy) => match reqwest::Client::builder()
+            .user_agent(HTTP_USER_AGENT)
             .timeout(std::time::Duration::from_secs(30))
             .proxy(match reqwest::Proxy::all(proxy) {
                 Ok(proxy) => proxy,
@@ -589,6 +684,7 @@ pub async fn http_request_raw(
     let client = match proxy.map(str::trim).filter(|value| !value.is_empty()) {
         Some(proxy) => {
             let mut builder = reqwest::Client::builder()
+                .user_agent(HTTP_USER_AGENT)
                 .timeout(std::time::Duration::from_secs(30))
                 .proxy(match reqwest::Proxy::all(proxy) {
                     Ok(proxy) => proxy,
@@ -607,6 +703,7 @@ pub async fn http_request_raw(
                 http_client().clone()
             } else {
                 match reqwest::Client::builder()
+                    .user_agent(HTTP_USER_AGENT)
                     .timeout(std::time::Duration::from_secs(30))
                     .redirect(reqwest::redirect::Policy::none())
                     .build()

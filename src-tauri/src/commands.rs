@@ -8,8 +8,8 @@ use serde_json::{json, Value};
 
 use tauri::Emitter;
 use wb_switch_core::modules::{
-    account, auth_file, checkin, codebuddy_cli, credit_usage, credits, export_import, oauth,
-    process, refresh, rotate, session, switch, update,
+    account, auth_file, checkin, codebuddy_cli, credit_usage, credits, dedup, export_import,
+    oauth, process, refresh, rotate, session, switch, travel, update,
 };
 
 #[derive(Serialize)]
@@ -197,10 +197,13 @@ pub fn reveal_app_in_finder() -> Result<(), String> {
     Ok(())
 }
 
-/// POST /api/switch —— 切换账号（备份 → 关进程 → 复制会话 → 写认证 → 重启）。
+/// POST /api/switch —— 切换账号（备份 → 关进程 → 迁移/复制会话 → 写认证 → 重启）。
 ///
 /// async + spawn_blocking：切换中关闭/启动 WorkBuddy 会阻塞数十秒，
 /// 若在同步 command（主线程）执行会卡死整个 UI（loading 遮罩无法渲染）。
+///
+/// 新增 `migrate_session_ids` 走路径 A（UPDATE 改归属，不产生重复），与原
+/// `copy_session_ids`（路径 B，INSERT 新 id）二选一；两者都传时优先 migrate。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn switch_account(
     app: tauri::AppHandle,
@@ -208,6 +211,7 @@ pub async fn switch_account(
     restart: Option<bool>,
     share_sessions: Option<bool>,
     copy_session_ids: Option<Vec<String>>,
+    migrate_session_ids: Option<Vec<String>>,
 ) -> Result<Value, String> {
     if account_id.trim().is_empty() {
         return Err("缺少 accountId".to_string());
@@ -215,6 +219,7 @@ pub async fn switch_account(
     let restart = restart.unwrap_or(true);
     let share_sessions = share_sessions.unwrap_or(false);
     let copy_ids = copy_session_ids.unwrap_or_default();
+    let migrate_ids = migrate_session_ids.unwrap_or_default();
     let progress: switch::ProgressFn = Box::new(move |message| {
         let _ = app.emit("switch-progress", json!({ "message": message }));
     });
@@ -225,6 +230,7 @@ pub async fn switch_account(
             restart,
             share_sessions,
             &copy_ids,
+            &migrate_ids,
         )
     })
     .await
@@ -261,6 +267,18 @@ pub async fn copy_sessions(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// GET /api/sessions/dedup/preview —— 预览当前账号的重复会话（只读，不删）。
+#[tauri::command(rename_all = "camelCase")]
+pub fn dedup_preview(user_id: Option<String>) -> Value {
+    dedup::dedup_preview(user_id)
+}
+
+/// POST /api/sessions/dedup/execute —— 软删重复会话（置 deleted_at，保留每组最早一条）。
+#[tauri::command(rename_all = "camelCase")]
+pub fn dedup_execute(user_id: Option<String>) -> Value {
+    dedup::dedup_execute(user_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -490,3 +508,59 @@ pub fn set_launch_at_login_enabled(_app: tauri::AppHandle, enabled: bool) -> Res
         Err("当前平台不支持开机自启".to_string())
     }
 }
+
+// ----------------------------- 猫猫旅行（GrowthSpace / Buddy Travel） -----------------------------
+
+/// GET /activity/growth/buddy/travel/status —— 查询指定账号的猫猫旅行状态（脱敏）。
+#[tauri::command]
+pub async fn get_travel_status(account_id: String) -> Result<Value, String> {
+    let acc = account::find_account(&account_id).ok_or("账号不存在")?;
+    Ok(travel::travel_status_for(&acc).await)
+}
+
+/// POST /activity/growth/buddy/travel/depart —— 派遣指定账号的猫猫去旅行。
+/// `location_id` 传 0 表示自动按日期轮转挑选目的地。
+#[tauri::command]
+pub async fn depart_travel(account_id: String, location_id: Option<i64>) -> Result<Value, String> {
+    let acc = account::find_account(&account_id).ok_or("账号不存在")?;
+    Ok(travel::depart_for(&acc, location_id.unwrap_or(0)).await)
+}
+
+/// POST /activity/growth/buddy/travel/claim —— 领取指定账号的猫猫旅行奖励（幂等）。
+#[tauri::command]
+pub async fn claim_travel(account_id: String) -> Result<Value, String> {
+    let acc = account::find_account(&account_id).ok_or("账号不存在")?;
+    Ok(travel::claim_for(&acc).await)
+}
+
+/// POST /activity/growth/buddy/travel/depart-all —— 一键派遣全部可派遣账号。
+#[tauri::command]
+pub async fn depart_all_travels(location_id: Option<i64>) -> Value {
+    travel::depart_all_for(location_id.unwrap_or(0), "manual").await
+}
+
+/// POST /activity/growth/buddy/travel/claim-all —— 一键领取全部可领取奖励。
+#[tauri::command]
+pub async fn claim_all_travels() -> Value {
+    travel::claim_all_for("manual").await
+}
+
+/// GET /activity/growth/buddy/travel/auto-config —— 旅行自动执行配置。
+#[tauri::command]
+pub fn get_travel_auto_config() -> Value {
+    crate::modules::config::load_travel_config()
+}
+
+/// POST /activity/growth/buddy/travel/auto-config —— 保存旅行自动执行配置。
+#[tauri::command]
+pub fn save_travel_auto_config(config: Value) -> Result<Value, String> {
+    crate::modules::config::save_travel_config(&config).map_err(|e| e.to_string())?;
+    Ok(crate::modules::config::load_travel_config())
+}
+
+/// GET /activity/growth/buddy/travel/logs —— 最近旅行批量操作日志。
+#[tauri::command]
+pub fn get_travel_logs() -> Value {
+    json!({ "logs": crate::modules::config::load_travel_logs() })
+}
+

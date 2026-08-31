@@ -324,6 +324,149 @@ fn register_edge_sync_mapping(new_cid: &str, target_uid: &str) -> bool {
     insert_edge_sync_mapping(&edge_sync_db_path(), new_cid, target_uid)
 }
 
+/// 迁移已存在的会话（UPDATE 改归属到目标账号，id 不变）到 edge-sync-mapping。
+/// 与 `register_edge_sync_mapping` 区别：本函数用于 UPDATE 路径，会话 id 保持不变，
+/// 但云端 msg_channel 需要从 `convmsg:{source_uid}` 改为 `convmsg:{target_uid}`。
+fn rekey_edge_sync_mapping(cid: &str, source_uid: &str, target_uid: &str) -> bool {
+    let db = edge_sync_db_path();
+    if !db.is_file() {
+        return false;
+    }
+    let Some(conn) = open_db(&db, false) else {
+        return false;
+    };
+    if !table_exists(&conn, "edge_sync_mapping") {
+        return false;
+    }
+    if !column_exists(&conn, "edge_sync_mapping", "msg_channel") {
+        return false;
+    }
+    let r = conn.execute(
+        "UPDATE edge_sync_mapping SET msg_channel = ?1 \
+         WHERE session_id = ?2 AND msg_channel = ?3",
+        rusqlite::params![format!("convmsg:{target_uid}"), cid, format!("convmsg:{source_uid}")],
+    );
+    match r {
+        Ok(n) if n > 0 => true,
+        _ => {
+            // 没匹配到已有映射，按新会话处理
+            insert_edge_sync_mapping(&db, cid, target_uid)
+        }
+    }
+}
+
+/// 切换前把勾选的会话迁移到目标账号（路径 A：UPDATE 改归属，id 不变）。
+///
+/// 与 `copy_sessions_for_switch` 的关键差异：
+///   - 行数不增加：会话在 db 中仍是同一行，仅改 `user_id`，不会有重复
+///   - 不生成新 id：原 id 保持不变（包括 `projects/{cid}.jsonl` 不动、`edge-sync-mapping` 表的 `session_id` 不变）
+///   - 云端归属目标：通过 UPDATE `msg_channel` 从 `convmsg:{source}` 改为 `convmsg:{target}`
+///
+/// 整体策略与 `migrate.py` 的 `migrate_sessions` 完全一致：UPDATE 改归属而非 INSERT 新行，
+/// 因为切换账号时并不真的需要「保留原账号的会话」（用户目的就是把当前账号的会话移到目标账号下）。
+pub fn migrate_sessions_for_switch(
+    target_acc: &Value,
+    session_ids: &[String],
+) -> Option<Value> {
+    let target_uid = target_acc
+        .get("uid")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if target_uid.is_empty() {
+        return None;
+    }
+    let source_uid = current_user_uid()?;
+    if source_uid == target_uid {
+        return None;
+    }
+    if session_ids.is_empty() {
+        return None;
+    }
+
+    let mut report = json!({
+        "sourceUid": source_uid,
+        "targetUid": target_uid,
+        "migrated": [],
+        "skipped": [],
+        "errors": [],
+    });
+
+    let db = workbuddy_db_path();
+    let Some(conn) = open_db(&db, true) else {
+        return Some(json!({"ok": false, "error": "无法打开 workbuddy.db"}));
+    };
+
+    // 列检测（防御性；user_id 几乎肯定存在）
+    let has_user_id = column_exists(&conn, "sessions", "user_id");
+    if !has_user_id {
+        return Some(
+            json!({"ok": false, "error": "sessions 表缺少 user_id 列，无法执行 UPDATE"}),
+        );
+    }
+
+    // 操作前 WAL checkpoint，确保读到的源账号数据是最新的
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+
+    // 操作前备份 db（仿 migrate.py 风格）
+    let backup_root = backup_dir().join("migrate-sessions").join(utc_iso());
+    let _ = backup_workbuddy_db(&backup_root);
+
+    let mut migrated_arr = Vec::new();
+    let mut skipped_arr = Vec::new();
+    let mut errors_arr = Vec::new();
+
+    // 防御：单条更新失败回退整事务？本函数与 switch_account 一并调用，失败不致命，采用逐条处理。
+    for cid in session_ids {
+        // 先确认源行存在且归属当前账号
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM sessions WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL",
+                rusqlite::params![cid, source_uid],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if !exists {
+            skipped_arr.push(json!({"id": cid, "reason": "源账号下不存在或已删除"}));
+            continue;
+        }
+
+        // UPDATE 改归属（与 migrate.py 完全一致）
+        let upd = conn.execute(
+            "UPDATE sessions SET user_id = ?1 WHERE id = ?2 AND user_id = ?3 AND deleted_at IS NULL",
+            rusqlite::params![target_uid, cid, source_uid],
+        );
+        match upd {
+            Ok(n) if n > 0 => {
+                let mapping_rekeyed =
+                    rekey_edge_sync_mapping(cid, &source_uid, &target_uid);
+                migrated_arr.push(json!({
+                    "id": cid,
+                    "migrated": true,
+                    "mappingRekeyed": mapping_rekeyed,
+                }));
+            }
+            Ok(_) => {
+                skipped_arr.push(json!({"id": cid, "reason": "未匹配到源会话行"}));
+            }
+            Err(e) => {
+                errors_arr.push(json!({"id": cid, "error": e.to_string()}));
+            }
+        }
+    }
+
+    // 提交事务并 WAL checkpoint 持久化
+    // conn 在 open_db(read_only=false) 情况下尚未 BEGIN；这里用 batch 提交。
+    let _ = conn.execute_batch("COMMIT; PRAGMA wal_checkpoint(TRUNCATE);");
+    // 注：conn 是 &Connection 借用，会在函数返回时自动 drop；这里不需要显式 close。
+
+    report["migrated"] = json!(migrated_arr);
+    report["skipped"] = json!(skipped_arr);
+    report["errors"] = json!(errors_arr);
+    report["backup"] = json!(backup_root.to_string_lossy().to_string());
+    Some(report)
+}
+
 fn insert_edge_sync_mapping(db_path: &Path, new_cid: &str, target_uid: &str) -> bool {
     if !db_path.is_file() {
         return false;

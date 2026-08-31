@@ -13,6 +13,8 @@ import type {
   CreditExpiry,
   CreditStatistics,
   CopyResult,
+  DedupExecuteResult,
+  DedupPreviewResult,
   GithubConfig,
   ImportPreviewAccount,
   ImportResult,
@@ -22,6 +24,11 @@ import type {
   RotateStatus,
   Session,
   SwitchResult,
+  TravelActionResult,
+  TravelAutoConfig,
+  TravelBatchResult,
+  TravelLog,
+  TravelStatus,
   UpdateInfo,
 } from "./types";
 import { DEMO_UNAVAILABLE_MESSAGE, demoModeEnabled } from "./demo-mode";
@@ -38,7 +45,11 @@ const DEMO_READ_COMMANDS = new Set([
   "get_status", "get_accounts", "get_codebuddy_cli_status", "get_checkin_status",
   "get_credit_expiry", "get_credit_statistics", "get_auto_checkin_config",
   "get_checkin_logs", "get_auto_rotate_config", "rotate_status", "get_rotate_logs",
-  "get_github_config", "check_update", "get_launch_at_login_enabled", "switch_progress",
+  "  get_github_config", "check_update", "get_launch_at_login_enabled", "switch_progress",
+  "get_travel_status",
+  "get_travel_auto_config",
+  "get_travel_logs",
+  "dedup_preview",
 ]);
 
 export function isDemoMode(): boolean {
@@ -84,6 +95,8 @@ const ROUTES: Record<string, Route> = {
   switch_account: { method: "POST", path: "/api/switch" },
   list_sessions: { method: "GET", path: "/api/sessions" },
   copy_sessions: { method: "POST", path: "/api/sessions/copy" },
+  dedup_preview: { method: "GET", path: "/api/sessions/dedup/preview" },
+  dedup_execute: { method: "POST", path: "/api/sessions/dedup/execute" },
   get_checkin_status: { method: "GET", path: "/api/checkin/status" },
   get_credit_expiry: { method: "POST", path: "/api/credits" },
   get_credit_statistics: { method: "GET", path: "/api/credits/stats" },
@@ -102,6 +115,14 @@ const ROUTES: Record<string, Route> = {
   save_github_config: { method: "POST", path: "/api/update/config" },
   check_update: { method: "GET", path: "/api/update/check" },
   switch_progress: { method: "GET", path: "/api/switch/progress" },
+  get_travel_status: { method: "GET", path: "/api/travel/status" },
+  depart_travel: { method: "POST", path: "/api/travel/depart" },
+  claim_travel: { method: "POST", path: "/api/travel/claim" },
+  depart_all_travels: { method: "POST", path: "/api/travel/depart-all" },
+  claim_all_travels: { method: "POST", path: "/api/travel/claim-all" },
+  get_travel_auto_config: { method: "GET", path: "/api/travel/auto-config" },
+  save_travel_auto_config: { method: "POST", path: "/api/travel/auto-config" },
+  get_travel_logs: { method: "GET", path: "/api/travel/logs" },
 };
 
 function queryString(args?: Record<string, unknown>): string {
@@ -229,6 +250,7 @@ export function switchAccount(args: {
   restart?: boolean;
   shareSessions?: boolean;
   copySessionIds?: string[];
+  migrateSessionIds?: string[];
 }): Promise<SwitchResult> {
   return call("switch_account", args as unknown as Record<string, unknown>);
 }
@@ -250,6 +272,16 @@ export function copySessions(
   sessionIds: string[],
 ): Promise<{ sourceUid: string; targetUid: string; copied: CopyResult[] }> {
   return call("copy_sessions", { targetAccountId, sessionIds });
+}
+
+/** 预览当前账号的重复会话（只读，不删）。 */
+export function dedupPreview(): Promise<DedupPreviewResult> {
+  return call("dedup_preview");
+}
+
+/** 软删重复会话（保留每组最早一条，可回滚）。 */
+export function dedupExecute(): Promise<DedupExecuteResult> {
+  return call("dedup_execute");
 }
 
 /** 打开系统设置授权面板（桌面端专用；webui 模式由服务进程权限决定，无操作）。 */
@@ -343,6 +375,50 @@ export function checkinAll(): Promise<{
   reason?: string;
 }> {
   return call("checkin_all");
+}
+
+// ---------------------------------------------------------------------------
+// 猫猫旅行（GrowthSpace / Buddy Travel）
+// ---------------------------------------------------------------------------
+
+export function getTravelStatus(accountId: string): Promise<TravelStatus> {
+  return call("get_travel_status", { accountId });
+}
+
+export function departTravel(
+  accountId: string,
+  locationId?: number,
+): Promise<TravelActionResult> {
+  return call("depart_travel", { accountId, locationId: locationId ?? 0 });
+}
+
+export function claimTravel(accountId: string): Promise<TravelActionResult> {
+  return call("claim_travel", { accountId });
+}
+
+/** 一键派遣全部可派遣账号。 */
+export function departAllTravels(locationId?: number): Promise<TravelBatchResult> {
+  return call("depart_all_travels", { locationId: locationId ?? 0 });
+}
+
+/** 一键领取全部可领取奖励。 */
+export function claimAllTravels(): Promise<TravelBatchResult> {
+  return call("claim_all_travels");
+}
+
+/** 读取旅行自动执行配置。 */
+export function getTravelAutoConfig(): Promise<TravelAutoConfig> {
+  return call("get_travel_auto_config");
+}
+
+/** 保存旅行自动执行配置。 */
+export function saveTravelAutoConfig(config: TravelAutoConfig): Promise<TravelAutoConfig> {
+  return call("save_travel_auto_config", { config });
+}
+
+/** 读取最近旅行批量操作日志。 */
+export function getTravelLogs(): Promise<{ logs: TravelLog[] }> {
+  return call("get_travel_logs");
 }
 
 export function getAutoCheckinConfig(): Promise<CheckinConfig> {
