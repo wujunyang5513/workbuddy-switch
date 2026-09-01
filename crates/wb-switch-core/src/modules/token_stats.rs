@@ -41,6 +41,10 @@ struct FileStats {
     models: HashMap<String, Totals>,
     projects: HashMap<String, Totals>,
     daily: HashMap<String, Totals>,
+    /// 模型 × 日期 的 Token 趋势（Token 趋势模型筛选）。
+    /// `#[serde(default)]`：旧缓存（schema 1）无此字段时用默认空值。
+    #[serde(default)]
+    daily_by_model: HashMap<String, HashMap<String, Totals>>,
     hours: HashMap<String, Totals>,
     sessions: Vec<SessionTotals>,
     /// 该文件记录的时间覆盖范围（毫秒），合并时用于整体 coverage。
@@ -80,7 +84,7 @@ struct CachedFile {
     stats: FileStats,
 }
 
-const CACHE_SCHEMA_VERSION: u32 = 1;
+const CACHE_SCHEMA_VERSION: u32 = 2;
 
 /// 时间桶 key：None=全量，Some(7/30/90)。
 fn bucket_key(days: Option<i64>) -> String {
@@ -469,6 +473,14 @@ fn scan_file(path: &Path, fallback_project: &str, cutoff: Option<i64>) -> (FileS
         if let Some(day) = date(&value) {
             stats
                 .daily
+                .entry(day.clone())
+                .or_insert_with(Totals::default)
+                .add(usage);
+            // 模型 × 日期 趋势（Token 趋势模型筛选）
+            stats
+                .daily_by_model
+                .entry(model(&value))
+                .or_default()
                 .entry(day)
                 .or_insert_with(Totals::default)
                 .add(usage);
@@ -506,6 +518,7 @@ fn merge_file_stats(sources: &[FileStats], name: &str, files_scanned: usize, par
     let mut models: HashMap<String, Totals> = HashMap::new();
     let mut projects: HashMap<String, Totals> = HashMap::new();
     let mut daily: HashMap<String, Totals> = HashMap::new();
+    let mut daily_by_model: HashMap<String, HashMap<String, Totals>> = HashMap::new();
     let mut hours: HashMap<String, Totals> = HashMap::new();
     let mut sessions: Vec<SessionTotals> = Vec::new();
     let mut coverage_start_at: Option<i64> = None;
@@ -524,6 +537,12 @@ fn merge_file_stats(sources: &[FileStats], name: &str, files_scanned: usize, par
         }
         for (key, totals) in &stats.daily {
             daily.entry(key.clone()).or_default().merge_into(totals);
+        }
+        for (model, points) in &stats.daily_by_model {
+            let bucket = daily_by_model.entry(model.clone()).or_default();
+            for (day, totals) in points {
+                bucket.entry(day.clone()).or_default().merge_into(totals);
+            }
         }
         for (key, totals) in &stats.hours {
             hours.entry(key.clone()).or_default().merge_into(totals);
@@ -553,6 +572,11 @@ fn merge_file_stats(sources: &[FileStats], name: &str, files_scanned: usize, par
         }
     }
 
+    let daily_by_model = daily_by_model
+        .into_iter()
+        .map(|(model, points)| (model, Value::Array(groups(points))))
+        .collect::<Map<String, Value>>();
+
     json!({
         "source": name,
         "summary": total.value(),
@@ -560,6 +584,7 @@ fn merge_file_stats(sources: &[FileStats], name: &str, files_scanned: usize, par
         "projects": groups(projects),
         "sessions": session_groups(sessions),
         "daily": groups(daily),
+        "dailyByModel": daily_by_model,
         "hours": groups(hours),
         "filesScanned": files_scanned,
         "parseErrors": parse_errors,
@@ -900,6 +925,8 @@ mod tests {
         assert_eq!(result["summary"]["cacheRead"], 4);
         assert_eq!(result["summary"]["total"], 13);
         assert_eq!(result["summary"]["records"], 1);
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        assert_eq!(result["dailyByModel"]["fixture-model"][0]["key"], today);
         assert_eq!(result["projects"][0]["key"], "fixture-project");
         fs::remove_dir_all(root).expect("remove fixture");
     }
