@@ -5,6 +5,9 @@
 //! （桌面端转发为 `switch-progress` 事件，HTTP 端写入轮询/SSE）。
 
 use serde_json::{json, Value};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::modules::account;
 use crate::modules::auth_file;
@@ -13,6 +16,106 @@ use crate::modules::session;
 
 /// 切换进度回调（宿主注入，如 Tauri `app.emit` 或 HTTP 进度缓存）。
 pub type ProgressFn = Box<dyn Fn(&str) + Send + Sync>;
+
+/// 迁移脚本路径解析：
+/// 1. 环境变量 WB_SWITCH_MIGRATE_SCRIPT 显式指定
+/// 2. 默认用户目录 workbuddy-account-migrate 下的 migrate.py
+fn migrate_script_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("WB_SWITCH_MIGRATE_SCRIPT") {
+        let path = PathBuf::from(p);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let home = crate::modules::config::home_dir();
+    let candidates = [
+        home.join("workbuddy-account-migrate/workbuddy-account-migrate/scripts/migrate.py"),
+        home.join("workbuddy-account-migrate/scripts/migrate.py"),
+    ];
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Python 可执行文件解析：WB_SWITCH_PYTHON 环境变量，否则 "python"。
+fn python_exe() -> String {
+    std::env::var("WB_SWITCH_PYTHON").unwrap_or_else(|_| "python".to_string())
+}
+
+/// 通过 migrate.py 脚本执行完整迁移（会话 + memory + connectors）。
+///
+/// 复用脚本的成熟逻辑：备份 → WAL checkpoint → UPDATE 改归属 → 验证 →
+/// 输出回滚标签。脚本以「源账号整体迁移」为语义（migrate --source S --target T），
+/// 与客户端「勾选部分会话」不同——按用户要求完全复用脚本，切换时迁移源账号全部会话。
+fn migrate_via_script(source_uid: &str, target_uid: &str) -> Result<Value, String> {
+    let script = migrate_script_path()
+        .ok_or_else(|| "未找到 migrate.py，请设置环境变量 WB_SWITCH_MIGRATE_SCRIPT".to_string())?;
+
+    let mut cmd = Command::new(python_exe());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd.arg(&script)
+        .arg("--source")
+        .arg(source_uid)
+        .arg("--target")
+        .arg(target_uid)
+        .arg("--yes")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| format!("启动 migrate.py 失败: {e}"))?;
+    let stdout = child.stdout.take().ok_or("无法读取脚本输出")?;
+    let stderr = child.stderr.take().ok_or("无法读取脚本错误")?;
+
+    // 读取完整输出（脚本输出量不大，直接读到 EOF）
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut status = None;
+    while status.is_none() {
+        match child.try_wait() {
+            Ok(Some(s)) => status = Some(s),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return Err("migrate.py 执行超时（120s）".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => return Err(format!("等待 migrate.py 失败: {e}")),
+        }
+    }
+    let status = status.expect("status checked");
+    let mut out = String::new();
+    let mut err = String::new();
+    std::io::Read::read_to_string(&mut std::io::BufReader::new(stdout), &mut out)
+        .map_err(|e| format!("读取脚本输出失败: {e}"))?;
+    std::io::Read::read_to_string(&mut std::io::BufReader::new(stderr), &mut err)
+        .map_err(|e| format!("读取脚本错误失败: {e}"))?;
+
+    if !status.success() {
+        return Err(format!(
+            "migrate.py 执行失败 (exit={}):\n{}",
+            status.code().unwrap_or(-1),
+            if err.trim().is_empty() { &out } else { &err }
+        ));
+    }
+
+    // 从输出中提取回滚标签
+    let backup_tag = out
+        .lines()
+        .find(|l| l.contains("备份标签"))
+        .and_then(|l| l.rsplit(':').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    Ok(json!({
+        "ok": true,
+        "via": "migrate.py",
+        "script": script.to_string_lossy().to_string(),
+        "backupTag": backup_tag,
+        "output": out.lines().filter(|l| !l.trim().is_empty()).take(30).collect::<Vec<_>>(),
+    }))
+}
 
 /// 切换账号。
 ///   - `restart=true` 时关进程后做会话处理（数据库在运行中不宜写入）
@@ -49,8 +152,21 @@ pub fn switch_account(
         close_workbuddy(20)?;
         // 只有重启场景才做会话操作（数据库在运行中不宜写入）
         if !migrate_session_ids.is_empty() {
-            progress("正在迁移会话到目标账号（UPDATE 改归属）…");
-            migrate_report = session::migrate_sessions_for_switch(&acc, migrate_session_ids);
+            progress("正在调用 migrate.py 迁移会话到目标账号…");
+            // 复用 migrate.py 脚本：源=当前认证账号（current_user_uid），目标=目标账号
+            let src = session::current_user_uid().unwrap_or_default();
+            let tgt = acc
+                .get("uid")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if src.is_empty() || tgt.is_empty() {
+                migrate_report = Some(json!({"ok": false, "error": "无法确定源/目标 uid"}));
+            } else if src == tgt {
+                migrate_report = Some(json!({"ok": false, "error": "源目标账号相同"}));
+            } else {
+                migrate_report = migrate_via_script(&src, &tgt).ok();
+            }
         } else if !copy_session_ids.is_empty() {
             progress("正在复制会话到目标账号（INSERT 新 id）…");
             copy_report = session::copy_sessions_for_switch(&acc, copy_session_ids);

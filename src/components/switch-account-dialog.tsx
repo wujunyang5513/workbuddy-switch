@@ -179,7 +179,6 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
     };
   }, [error]);
 
-  const migrateCount = migrateSessions ? selected.size : 0;
   const needsPermission = error.includes("无权限");
   const sessionsEmpty = !loadingSessions && sessions.length === 0;
   const migrateHint = loadingSessions
@@ -190,7 +189,7 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
         ? currentUid
           ? "当前账号暂无会话，无法迁移"
           : "未检测到当前登录账号，无法列出会话"
-        : "将当前账号勾选的会话迁移到目标账号（UPDATE 改归属，不会产生重复，云端归属目标）";
+        : "切换时将调用 migrate.py 脚本，把当前账号的全部会话迁移到目标账号（含备份与验证）";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -406,7 +405,7 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
             取消
           </Button>
           {!result && (
-            <Button onClick={doSwitch} disabled={busy || (migrateSessions && migrateCount === 0)}>
+            <Button onClick={doSwitch} disabled={busy}>
               {busy ? "切换中…" : "确认切换"}
             </Button>
           )}
