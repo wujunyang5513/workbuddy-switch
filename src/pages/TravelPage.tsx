@@ -46,7 +46,7 @@ import type {
 import { useAccountsStore } from "@/stores/accounts";
 
 function formatDateTime(ts: number | null | undefined): string {
-  if (ts === null || ts === undefined || !Number.isFinite(ts)) return "—";
+  if (ts === null || ts === undefined || !Number.isFinite(ts) || ts <= 0) return "—";
   return new Date(ts).toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
@@ -58,14 +58,20 @@ function formatDateTime(ts: number | null | undefined): string {
 function stateLabel(state: string | undefined): string {
   switch (state) {
     case "idle":
+    case "空闲":
       return "空闲";
     case "traveling":
+    case "旅行中":
       return "旅行中";
     case "arrived":
+    case "已到达":
       return "已到达";
     case "finished":
     case "done":
+    case "已完成":
       return "已完成";
+    case "空间":
+      return "空间";
     default:
       return state || "未知";
   }
@@ -627,14 +633,25 @@ export default function TravelPage() {
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     onClick={doDepart}
-                    disabled={actionLoading !== null || t.state === "traveling"}
+                    disabled={
+                      actionLoading !== null ||
+                      t.state === "traveling" ||
+                      t.dailyLimitReached === true ||
+                      t.hasLetter === true
+                    }
                   >
                     {actionLoading === "depart" ? (
                       <Loader2 className="size-4 animate-spin" />
                     ) : (
                       <PlaneTakeoff className="size-4" />
                     )}
-                    {actionLoading === "depart" ? "派遣中…" : "派遣旅行"}
+                    {actionLoading === "depart"
+                      ? "派遣中…"
+                      : t.hasLetter
+                        ? "请先领取"
+                        : t.dailyLimitReached
+                          ? "今日已达上限"
+                          : "派遣旅行"}
                   </Button>
                   <Button
                     variant="secondary"
