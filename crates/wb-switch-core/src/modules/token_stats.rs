@@ -691,8 +691,17 @@ fn source_cached(
         merged.push(stats);
     }
 
-    // 删除缓存中磁盘已不存在的文件条目
-    cache.files.retain(|key, _| seen_keys.contains(key));
+    // 只删除「当前 source 前缀」下磁盘已不存在的文件条目；
+    // 其他 source 的缓存条目必须保留，否则第二个 source 会清空第一个
+    // source 刚写入的缓存（codebuddy 为空时会把 workbuddy 缓存全删掉）。
+    let prefix = format!("{name}/");
+    cache.files.retain(|key, _| {
+        if key.starts_with(&prefix) {
+            seen_keys.contains(key)
+        } else {
+            true
+        }
+    });
 
     let value = merge_file_stats(&merged, name, paths.len(), parse_errors);
     value
@@ -1158,6 +1167,44 @@ mod tests {
         assert_eq!(loaded.schema_version, CACHE_SCHEMA_VERSION);
         let second = source_cached(root.clone(), "fixture", None, None, &mut cache);
         assert_eq!(second["summary"]["input"], 42, "roundtrip 后结果一致");
+
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn multiple_sources_do_not_clear_each_others_cache() {
+        let now = crate::modules::config::now_ms();
+        let root = fixture_root("multi-source");
+
+        // 两个数据源：workbuddy 有 1 个文件，codebuddy 为空（模拟用户环境）
+        let wb = root.join("wb");
+        let cb = root.join("cb");
+        fs::create_dir_all(wb.join("project")).expect("create wb dir");
+        fs::create_dir_all(&cb).expect("create cb dir");
+        fs::write(
+            wb.join("project/session-a.jsonl"),
+            format!("{}\n", usage_record(now, 42)),
+        )
+        .expect("write wb session");
+
+        let mut cache = FileCache::default();
+        // 先扫 workbuddy（有数据），再扫 codebuddy（空目录）
+        let wb_result = source_cached(wb.clone(), "workbuddy", None, None, &mut cache);
+        assert_eq!(wb_result["summary"]["input"], 42);
+        assert_eq!(cache.files.len(), 1, "workbuddy 扫描后应有 1 个缓存条目");
+
+        let cb_result = source_cached(cb.clone(), "codebuddy-cli", None, None, &mut cache);
+        assert_eq!(cb_result["summary"]["input"], 0);
+        // 关键断言：codebuddy 扫描后，workbuddy 的缓存必须还在
+        assert_eq!(
+            cache.files.len(),
+            1,
+            "codebuddy 空扫描不应清空 workbuddy 的缓存条目（回归 bug）"
+        );
+
+        // 再扫一次 workbuddy，应命中缓存（指纹未变）
+        let wb_again = source_cached(wb.clone(), "workbuddy", None, None, &mut cache);
+        assert_eq!(wb_again["summary"]["input"], 42, "workbuddy 缓存应被保留并可复用");
 
         fs::remove_dir_all(root).expect("remove fixture");
     }
