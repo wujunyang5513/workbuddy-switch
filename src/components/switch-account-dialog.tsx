@@ -116,17 +116,38 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
     setProgress("正在切换账号…");
     setError("");
     try {
-      const res = await api.switchAccount({
-        accountId: account.id,
-        migrateSessionIds: migrateSessions ? [...selected] : undefined,
-      });
+      // 兜底：切换涉及关闭/重启 WorkBuddy + 迁移脚本，最坏可能数十秒。
+      // 超过 100s 仍未返回则提示用户，避免无限等待卡在黑屏。
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        window.setTimeout(
+          () => reject(new Error("切换超时（100s）。WorkBuddy 可能已重启，请关闭本窗口后重新打开。")),
+          100_000,
+        ),
+      );
+      const res = await Promise.race([
+        api.switchAccount({
+          accountId: account.id,
+          migrateSessionIds: migrateSessions ? [...selected] : undefined,
+        }),
+        timeoutPromise,
+      ]);
       setResult(res);
+      // 切换会重启 WorkBuddy 并更换认证账号，前端缓存的状态（账号/会话/统计）
+      // 已全部过期。桌面端在短暂展示成功结果后强制整页刷新，让应用按新账号
+      // 重建状态——否则会停在旧界面出现空白/黑屏（此前需手动重开才恢复）。
+      if (!api.isWebui()) {
+        setProgress("切换成功，正在刷新界面…");
+        window.setTimeout(() => window.location.reload(), 1200);
+        return;
+      }
       onDone?.();
     } catch (e) {
       setError(api.asError(e));
     } finally {
-      setBusy(false);
-      setProgress("");
+      if (api.isWebui()) {
+        setBusy(false);
+        setProgress("");
+      }
     }
   }
 
@@ -206,11 +227,25 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
 
         {busy && (
           <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 rounded-lg bg-background/85 backdrop-blur-sm">
-            <Loader2 className="size-8 animate-spin text-primary" />
-            <p className="text-sm font-medium">{progress || "正在切换账号…"}</p>
-            <p className="max-w-xs text-center text-xs text-muted-foreground">
-              正在处理中，请勿关闭窗口
-            </p>
+            {progress === "切换成功，正在刷新界面…" ? (
+              <>
+                <Loader2 className="size-8 animate-spin text-emerald-500" />
+                <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                  {progress}
+                </p>
+                <p className="max-w-xs text-center text-xs text-muted-foreground">
+                  正在按新账号重新加载，请稍候…
+                </p>
+              </>
+            ) : (
+              <>
+                <Loader2 className="size-8 animate-spin text-primary" />
+                <p className="text-sm font-medium">{progress || "正在切换账号…"}</p>
+                <p className="max-w-xs text-center text-xs text-muted-foreground">
+                  正在处理中，请勿关闭窗口
+                </p>
+              </>
+            )}
           </div>
         )}
 
