@@ -65,7 +65,9 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
   // 打开时加载当前账号会话
   useEffect(() => {
     if (open && account) {
-      setMigrateSessions(false);
+      // 默认开启迁移 + 默认全选所有会话（实际由 migrate.py 全量迁移，
+      // UI 上全选让用户直观看到「会迁走哪些」）。
+      setMigrateSessions(true);
       setSelected(new Set());
       setExpanded(new Set());
       setError("");
@@ -76,6 +78,7 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
         .then((res) => {
           setSessions(res.sessions);
           setCurrentUid(res.current);
+          setSelected(new Set(res.sessions.map((s) => s.id)));
         })
         .catch((e) => setError(api.asError(e)))
         .finally(() => setLoadingSessions(false));
