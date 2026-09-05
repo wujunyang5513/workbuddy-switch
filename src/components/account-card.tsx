@@ -93,6 +93,8 @@ interface Props {
   onDelete: (a: AccountMeta) => void;
   onCheckin?: (a: AccountMeta) => void;
   onRefresh?: (a: AccountMeta) => void;
+  /** 一键领取成长中心全部可领取任务奖励 */
+  onClaimTasks?: (a: AccountMeta) => void;
   onSwitch?: (a: AccountMeta) => void;
   todayCheckedIn?: boolean;
   credit?: CreditExpiry;
@@ -111,10 +113,12 @@ interface Props {
   featuresDisabled?: boolean;
   /** 紧凑模式：头部缩成一条、按钮图标化、无 footer */
   compact?: boolean;
-  /** 成长中心可完成任务数（undefined = 未加载/不支持） */
+  /** 成长中心未完成任务数（undefined = 未加载/不支持） */
   availableTasks?: number;
   /** 任务数查询进行中 */
   tasksLoading?: boolean;
+  /** 领取任务奖励进行中 */
+  claimTasksBusy?: boolean;
 }
 
 function ProductCurrentState({ product, compact = false }: { product: "workbuddy" | "codebuddy"; compact?: boolean }) {
@@ -136,7 +140,7 @@ function ProductCurrentState({ product, compact = false }: { product: "workbuddy
   );
 }
 
-export function AccountCard({ account, onDelete, onCheckin, onRefresh, onSwitch, todayCheckedIn, credit, creditLoading, creditUpdatedAt, creditPriority, workbuddyActive, codebuddyCliConfigured, codebuddyCliActive, codebuddyCliBusy, onSwitchCodebuddyCli, codebuddyCliLoading, featuresDisabled = true, compact = false, availableTasks, tasksLoading = false }: Props) {
+export function AccountCard({ account, onDelete, onCheckin, onRefresh, onSwitch, todayCheckedIn, credit, creditLoading, creditUpdatedAt, creditPriority, workbuddyActive, codebuddyCliConfigured, codebuddyCliActive, codebuddyCliBusy, onSwitchCodebuddyCli, codebuddyCliLoading, featuresDisabled = true, compact = false, availableTasks, tasksLoading = false, claimTasksBusy = false, onClaimTasks }: Props) {
   const [resourcesOpen, setResourcesOpen] = useState(false);
   const name = account.nickname || account.uid || "未命名账号";
   const expired = typeof account.expiresAt === "number" && account.expiresAt < Date.now();
@@ -163,7 +167,7 @@ export function AccountCard({ account, onDelete, onCheckin, onRefresh, onSwitch,
       {availableTasks !== undefined && (
         <Badge
           variant={availableTasks > 0 ? "secondary" : "outline"}
-          title="成长中心可完成任务"
+          title="成长中心未完成任务"
           className={cn(
             chipClass,
             availableTasks > 0
@@ -176,7 +180,7 @@ export function AccountCard({ account, onDelete, onCheckin, onRefresh, onSwitch,
           ) : (
             <Sparkles className="size-3" />
           )}
-          {tasksLoading ? "任务查询中" : `可完成 ${availableTasks}`}
+          {tasksLoading ? "任务查询中" : `未完成 ${availableTasks}`}
         </Badge>
       )}
       {(account.needsRelogin || expired) && <Badge variant="warning" className={chipClass}>{account.needsRelogin ? "需重新登录" : "Token 已过期"}</Badge>}
@@ -236,6 +240,11 @@ export function AccountCard({ account, onDelete, onCheckin, onRefresh, onSwitch,
                 {todayCheckedIn === false && (
                   <DropdownMenuItem disabled={featuresDisabled || !onCheckin} onSelect={() => onCheckin?.(account)}>
                     <CircleCheck />手动签到
+                  </DropdownMenuItem>
+                )}
+                {onClaimTasks && (
+                  <DropdownMenuItem disabled={featuresDisabled || !onClaimTasks || claimTasksBusy} onSelect={() => onClaimTasks(account)}>
+                    <Sparkles />领取任务奖励
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />

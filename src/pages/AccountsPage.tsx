@@ -94,7 +94,7 @@ async function fetchTodayCheckinMap(
   return next;
 }
 
-/** 并行查询各账号成长中心可完成任务数量（仅桌面端支持；失败/未支持返回空）。 */
+/** 并行查询各账号成长中心未完成任务数量（仅桌面端支持；失败/未支持返回空）。 */
 async function fetchAvailableTasksMap(
   accountIds: string[],
   isStale?: () => boolean,
@@ -104,7 +104,7 @@ async function fetchAvailableTasksMap(
       try {
         const res = await api.getAvailableTasks(id);
         if (isStale?.() || !res.tasks?.ok) return null;
-        return [id, res.tasks.available] as const;
+        return [id, res.tasks.todo] as const;
       } catch {
         return null;
       }
@@ -146,6 +146,8 @@ export default function AccountsPage() {
   const [availableTasksMap, setAvailableTasksMap] = useState<Record<string, number>>({});
   /** 账号 id -> 任务数查询中 */
   const [tasksLoadingMap, setTasksLoadingMap] = useState<Record<string, boolean>>({});
+  /** 账号 id -> 领取任务奖励进行中 */
+  const [claimTasksBusyMap, setClaimTasksBusyMap] = useState<Record<string, boolean>>({});
   const [codebuddyCli, setCodebuddyCli] = useState<CodeBuddyCliStatus | null>(null);
   const [codebuddyCliSwitchingId, setCodebuddyCliSwitchingId] = useState<string | null>(null);
   const [installingCodebuddyCli, setInstallingCodebuddyCli] = useState(false);
@@ -351,6 +353,53 @@ export default function AccountsPage() {
       if (res.result !== "error") void refreshCredits([a.id]);
     } catch (e) {
       toast.error("签到失败", { description: api.asError(e) });
+    }
+  }
+
+  async function onClaimTasks(a: AccountMeta) {
+    setClaimTasksBusyMap((prev) => ({ ...prev, [a.id]: true }));
+    try {
+      const res = await api.claimAllTasks(a.id);
+      const r = (res.result ?? {}) as {
+        found?: number;
+        claimed?: string[];
+        skipped?: string[];
+        errors?: unknown[];
+      };
+      const claimed = r.claimed?.length ?? 0;
+      const label = claimed > 0 ? `已领取 ${claimed} 个任务奖励` : "无可领取任务奖励";
+      const details = [
+        r.found ? `发现 ${r.found} 个` : "",
+        r.skipped?.length ? `跳过 ${r.skipped.length}（已领）` : "",
+        r.errors?.length ? `失败 ${r.errors.length}` : "",
+      ]
+        .filter(Boolean)
+        .join("；");
+      if (claimed > 0) toast.success(label, { description: details || undefined });
+      else toast.info(label);
+      // 刷新任务数与积分
+      void refreshTasksFor(a);
+      void refreshCredits([a.id]);
+    } catch (e) {
+      toast.error("领取任务奖励失败", { description: api.asError(e) });
+    } finally {
+      setClaimTasksBusyMap((prev) => {
+        const next = { ...prev };
+        delete next[a.id];
+        return next;
+      });
+    }
+  }
+
+  /** 刷新单个账号的未完成任务数。 */
+  async function refreshTasksFor(a: AccountMeta) {
+    try {
+      const res = await api.getAvailableTasks(a.id);
+      if (res.tasks?.ok) {
+        setAvailableTasksMap((prev) => ({ ...prev, [a.id]: res.tasks.todo }));
+      }
+    } catch {
+      /* ignore */
     }
   }
 
@@ -702,6 +751,8 @@ export default function AccountsPage() {
                 todayCheckedIn={checkinMap[a.id]}
                 availableTasks={availableTasksMap[a.id]}
                 tasksLoading={Boolean(tasksLoadingMap[a.id])}
+                onClaimTasks={onClaimTasks}
+                claimTasksBusy={Boolean(claimTasksBusyMap[a.id])}
                 credit={creditMap[a.id]}
                 creditLoading={creditLoadingMap[a.id]}
                 creditUpdatedAt={creditUpdatedAtMap[a.id]}

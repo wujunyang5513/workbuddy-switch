@@ -482,17 +482,19 @@ export interface TravelBatchResult {
   accounts: TravelActionResult[];
 }
 
-/** 成长中心任务统计（账号卡片显示可完成任务数）。 */
+/** 成长中心任务统计（账号卡片显示未完成任务数）。 */
 export interface AvailableTasks {
   accountId: string;
   email: string;
   tasks: {
     ok: boolean;
-    /** 可完成（status=available）任务数 */
-    available: number;
+    /** 未完成任务数（accept_status != claimed，对齐成长中心页面） */
+    todo: number;
     /** 任务总数 */
     total: number;
-    tasks: string[];
+    /** 可领取奖励数（completed && has_reward） */
+    claimable: number;
+    titles: string[];
     error?: string;
   };
 }

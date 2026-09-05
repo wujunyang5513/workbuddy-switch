@@ -431,6 +431,14 @@ export function getAvailableTasks(accountId: string): Promise<AvailableTasks> {
   return call("get_available_tasks", { accountId });
 }
 
+export function acceptAllTasks(accountId: string): Promise<{ ok: boolean; result: unknown }> {
+  return call("accept_all_tasks", { accountId });
+}
+
+export function claimAllTasks(accountId: string): Promise<{ ok: boolean; result: unknown }> {
+  return call("claim_all_tasks", { accountId });
+}
+
 export function getAutoCheckinConfig(): Promise<CheckinConfig> {
   return call("get_auto_checkin_config");
 }

@@ -179,6 +179,8 @@ pub fn run() {
             commands::save_travel_auto_config,
             commands::get_travel_logs,
             commands::get_available_tasks,
+            commands::accept_all_tasks,
+            commands::claim_all_tasks,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

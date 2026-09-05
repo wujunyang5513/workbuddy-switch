@@ -540,11 +540,25 @@ pub async fn claim_travel(account_id: String) -> Result<Value, String> {
     Ok(travel::claim_for(&acc).await)
 }
 
-/// GET /activity/growth/tasks/ —— 查询指定账号的可完成任务数量（脱敏）。
+/// GET /v2/activity/growth/tasks —— 查询指定账号的成长任务统计（脱敏）。
 #[tauri::command]
 pub async fn get_available_tasks(account_id: String) -> Result<Value, String> {
     let acc = account::find_account(&account_id).ok_or("账号不存在")?;
     Ok(tasks::available_tasks_for(&acc).await)
+}
+
+/// POST /activity/growth/tasks/accept —— 一键接受指定账号全部未接受任务。
+#[tauri::command]
+pub async fn accept_all_tasks(account_id: String) -> Result<Value, String> {
+    let acc = account::find_account(&account_id).ok_or("账号不存在")?;
+    Ok(tasks::accept_all_tasks(&acc).await)
+}
+
+/// POST /activity/growth/tasks/<code>/claim —— 一键领取指定账号全部可领取奖励。
+#[tauri::command]
+pub async fn claim_all_tasks(account_id: String) -> Result<Value, String> {
+    let acc = account::find_account(&account_id).ok_or("账号不存在")?;
+    Ok(tasks::claim_all_tasks(&acc).await)
 }
 
 /// POST /activity/growth/buddy/travel/depart-all —— 一键派遣全部可派遣账号。
