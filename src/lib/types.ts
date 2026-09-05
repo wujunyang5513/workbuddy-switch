@@ -481,3 +481,18 @@ export interface TravelBatchResult {
   failed: number;
   accounts: TravelActionResult[];
 }
+
+/** 成长中心任务统计（账号卡片显示可完成任务数）。 */
+export interface AvailableTasks {
+  accountId: string;
+  email: string;
+  tasks: {
+    ok: boolean;
+    /** 可完成（status=available）任务数 */
+    available: number;
+    /** 任务总数 */
+    total: number;
+    tasks: string[];
+    error?: string;
+  };
+}

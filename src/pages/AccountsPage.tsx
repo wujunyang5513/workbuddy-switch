@@ -94,6 +94,29 @@ async function fetchTodayCheckinMap(
   return next;
 }
 
+/** 并行查询各账号成长中心可完成任务数量（仅桌面端支持；失败/未支持返回空）。 */
+async function fetchAvailableTasksMap(
+  accountIds: string[],
+  isStale?: () => boolean,
+): Promise<Record<string, number>> {
+  const entries = await Promise.all(
+    accountIds.map(async (id) => {
+      try {
+        const res = await api.getAvailableTasks(id);
+        if (isStale?.() || !res.tasks?.ok) return null;
+        return [id, res.tasks.available] as const;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const next: Record<string, number> = {};
+  for (const entry of entries) {
+    if (entry) next[entry[0]] = entry[1];
+  }
+  return next;
+}
+
 export default function AccountsPage() {
   const {
     accounts,
@@ -119,6 +142,10 @@ export default function AccountsPage() {
   const [autoCheckinSaving, setAutoCheckinSaving] = useState(false);
   /** 账号 id -> 今日是否已签到（undefined=查询中/未知） */
   const [checkinMap, setCheckinMap] = useState<Record<string, boolean>>({});
+  /** 账号 id -> 成长中心可完成任务数（undefined=未知/不支持） */
+  const [availableTasksMap, setAvailableTasksMap] = useState<Record<string, number>>({});
+  /** 账号 id -> 任务数查询中 */
+  const [tasksLoadingMap, setTasksLoadingMap] = useState<Record<string, boolean>>({});
   const [codebuddyCli, setCodebuddyCli] = useState<CodeBuddyCliStatus | null>(null);
   const [codebuddyCliSwitchingId, setCodebuddyCliSwitchingId] = useState<string | null>(null);
   const [installingCodebuddyCli, setInstallingCodebuddyCli] = useState(false);
@@ -205,6 +232,30 @@ export default function AccountsPage() {
       if (!cancelled && Object.keys(next).length > 0) {
         setCheckinMap((prev) => ({ ...prev, ...next }));
       }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts]);
+
+  // 账号列表变化后并行查询各账号成长中心可完成任务数量（桌面端）
+  useEffect(() => {
+    if (!accounts.length || api.isWebui()) return;
+    let cancelled = false;
+    const ids = accounts.map((account) => account.id);
+    setTasksLoadingMap((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const id of ids) next[id] = true;
+      return { ...prev, ...next };
+    });
+    void fetchAvailableTasksMap(ids, () => cancelled).then((next) => {
+      if (cancelled) return;
+      setAvailableTasksMap((prev) => ({ ...prev, ...next }));
+      setTasksLoadingMap((prev) => {
+        const rest = { ...prev };
+        for (const id of ids) delete rest[id];
+        return rest;
+      });
     });
     return () => {
       cancelled = true;
@@ -649,6 +700,8 @@ export default function AccountsPage() {
                 onCheckin={onCheckin}
                 onRefresh={onRefresh}
                 todayCheckedIn={checkinMap[a.id]}
+                availableTasks={availableTasksMap[a.id]}
+                tasksLoading={Boolean(tasksLoadingMap[a.id])}
                 credit={creditMap[a.id]}
                 creditLoading={creditLoadingMap[a.id]}
                 creditUpdatedAt={creditUpdatedAtMap[a.id]}

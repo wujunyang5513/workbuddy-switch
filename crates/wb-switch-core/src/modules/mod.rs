@@ -14,6 +14,7 @@ pub mod refresh;
 pub mod rotate;
 pub mod session;
 pub mod switch;
+pub mod tasks;
 pub mod token_stats;
 pub mod travel;
 pub mod update;

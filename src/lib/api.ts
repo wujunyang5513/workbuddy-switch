@@ -31,6 +31,7 @@ import type {
   TravelLog,
   TravelStatus,
   UpdateInfo,
+  AvailableTasks,
 } from "./types";
 import { DEMO_UNAVAILABLE_MESSAGE, demoModeEnabled } from "./demo-mode";
 import { screenshotDemoResponse } from "./screenshot-demo";
@@ -424,6 +425,10 @@ export function saveTravelAutoConfig(config: TravelAutoConfig): Promise<TravelAu
 /** 读取最近旅行批量操作日志。 */
 export function getTravelLogs(): Promise<{ logs: TravelLog[] }> {
   return call("get_travel_logs");
+}
+
+export function getAvailableTasks(accountId: string): Promise<AvailableTasks> {
+  return call("get_available_tasks", { accountId });
 }
 
 export function getAutoCheckinConfig(): Promise<CheckinConfig> {

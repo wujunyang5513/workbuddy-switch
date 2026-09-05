@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 use wb_switch_core::modules::{
     account, auth_file, checkin, codebuddy_cli, credit_usage, credits, dedup, export_import,
-    oauth, process, refresh, rotate, session, switch, token_stats, travel, update,
+    oauth, process, refresh, rotate, session, switch, tasks, token_stats, travel, update,
 };
 
 #[derive(Serialize)]
@@ -538,6 +538,13 @@ pub async fn depart_travel(account_id: String, location_id: Option<i64>) -> Resu
 pub async fn claim_travel(account_id: String) -> Result<Value, String> {
     let acc = account::find_account(&account_id).ok_or("账号不存在")?;
     Ok(travel::claim_for(&acc).await)
+}
+
+/// GET /activity/growth/tasks/ —— 查询指定账号的可完成任务数量（脱敏）。
+#[tauri::command]
+pub async fn get_available_tasks(account_id: String) -> Result<Value, String> {
+    let acc = account::find_account(&account_id).ok_or("账号不存在")?;
+    Ok(tasks::available_tasks_for(&acc).await)
 }
 
 /// POST /activity/growth/buddy/travel/depart-all —— 一键派遣全部可派遣账号。
