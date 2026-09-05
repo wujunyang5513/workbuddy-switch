@@ -482,6 +482,17 @@ export interface TravelBatchResult {
   accounts: TravelActionResult[];
 }
 
+/** 成长中心任务自动执行配置。 */
+export interface AutoTasksConfig {
+  enabled: boolean;
+  /** 是否自动接受未接受任务 */
+  accept_enabled: boolean;
+  /** 是否自动领取可领取奖励 */
+  claim_enabled: boolean;
+  /** 检查间隔（分钟） */
+  check_interval_minutes: number;
+}
+
 /** 成长中心任务统计（账号卡片显示未完成任务数）。 */
 export interface AvailableTasks {
   accountId: string;

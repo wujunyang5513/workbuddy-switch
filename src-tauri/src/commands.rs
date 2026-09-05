@@ -561,6 +561,31 @@ pub async fn claim_all_tasks(account_id: String) -> Result<Value, String> {
     Ok(tasks::claim_all_tasks(&acc).await)
 }
 
+/// 读取成长任务自动执行配置。
+#[tauri::command]
+pub fn get_auto_tasks_config() -> Value {
+    tasks::auto_tasks_config_value()
+}
+
+/// 保存成长任务自动执行配置。
+#[tauri::command]
+pub fn save_auto_tasks_config(config: Value) -> Result<Value, String> {
+    crate::modules::config::save_tasks_config(&config).map_err(|e| e.to_string())?;
+    Ok(tasks::auto_tasks_config_value())
+}
+
+/// 读取成长任务自动执行日志。
+#[tauri::command]
+pub fn get_tasks_logs() -> Value {
+    json!({ "logs": crate::modules::config::load_tasks_logs() })
+}
+
+/// 手动触发一次成长任务自动执行（接受 + 领取）。
+#[tauri::command]
+pub async fn run_tasks_auto() -> Result<Value, String> {
+    Ok(tasks::run_tasks_auto_cycle("manual").await)
+}
+
 /// POST /activity/growth/buddy/travel/depart-all —— 一键派遣全部可派遣账号。
 #[tauri::command]
 pub async fn depart_all_travels(location_id: Option<i64>) -> Value {

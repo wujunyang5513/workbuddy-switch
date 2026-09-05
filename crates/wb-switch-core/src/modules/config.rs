@@ -86,6 +86,16 @@ pub fn auto_travel_config_file() -> PathBuf {
     store_dir().join("auto_travel_config.json")
 }
 
+/// 成长任务自动执行配置文件。
+pub fn auto_tasks_config_file() -> PathBuf {
+    store_dir().join("auto_tasks_config.json")
+}
+
+/// 成长任务自动执行日志文件。
+pub fn tasks_logs_file() -> PathBuf {
+    store_dir().join("auto_tasks_logs.json")
+}
+
 pub fn travel_logs_file() -> PathBuf {
     store_dir().join("auto_travel_logs.json")
 }
@@ -476,6 +486,70 @@ pub fn load_travel_logs() -> Vec<Value> {
         }
     }
     vec![]
+}
+
+/// 成长任务自动执行默认配置。
+pub fn default_tasks_config() -> Value {
+    json!({
+        "enabled": true,
+        "accept_enabled": true,
+        "claim_enabled": true,
+        "check_interval_minutes": 30,
+    })
+}
+
+/// 读取成长任务自动执行配置（缺失/损坏时合并默认值）。
+pub fn load_tasks_config() -> Value {
+    let mut cfg = default_tasks_config();
+    let f = auto_tasks_config_file();
+    if f.exists() {
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) {
+                for (k, v) in map {
+                    cfg[k] = v;
+                }
+            }
+        }
+    }
+    cfg
+}
+
+/// 保存成长任务自动执行配置（只保留已知字段）。
+pub fn save_tasks_config(cfg: &Value) -> std::io::Result<()> {
+    let mut merged = default_tasks_config();
+    let allowed: Vec<&str> =
+        vec!["enabled", "accept_enabled", "claim_enabled", "check_interval_minutes"];
+    for k in allowed {
+        if let Some(v) = cfg.get(k) {
+            merged[k] = v.clone();
+        }
+    }
+    std::fs::create_dir_all(store_dir())?;
+    let content = serde_json::to_string_pretty(&merged).unwrap_or_default();
+    atomic_write(&auto_tasks_config_file(), &content)
+}
+
+/// 读取成长任务自动执行日志（最新在前）。
+pub fn load_tasks_logs() -> Vec<Value> {
+    let f = tasks_logs_file();
+    if f.exists() {
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            if let Ok(Value::Array(arr)) = serde_json::from_str::<Value>(&text) {
+                return arr;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// 追加一条成长任务自动执行日志（保留最近 100 条）。
+pub fn append_tasks_log(entry: &Value) {
+    let mut logs = load_tasks_logs();
+    logs.insert(0, entry.clone());
+    logs.truncate(100);
+    if let Ok(text) = serde_json::to_string_pretty(&logs) {
+        let _ = atomic_write(&tasks_logs_file(), &text);
+    }
 }
 
 /// 追加一条旅行批量操作日志（保留最近 200 条）。

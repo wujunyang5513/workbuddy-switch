@@ -90,6 +90,27 @@ fn spawn_background_loops() {
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
     });
+
+    // 成长任务自动执行：按配置间隔检查全部账号，自动接受未接受任务、领取可领取奖励。
+    tauri::async_runtime::spawn(async move {
+        let mut last_run_at: i64 = 0;
+        loop {
+            let tasks_cfg = modules::config::load_tasks_config();
+            if tasks_cfg.get("enabled").and_then(|v| v.as_bool()) == Some(true) {
+                let interval_minutes = tasks_cfg
+                    .get("check_interval_minutes")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(30)
+                    .max(1);
+                let now = modules::config::now_ms();
+                if now - last_run_at >= interval_minutes * 60_000 {
+                    last_run_at = now;
+                    let _ = modules::tasks::run_tasks_auto_cycle("auto").await;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -181,6 +202,10 @@ pub fn run() {
             commands::get_available_tasks,
             commands::accept_all_tasks,
             commands::claim_all_tasks,
+            commands::get_auto_tasks_config,
+            commands::save_auto_tasks_config,
+            commands::get_tasks_logs,
+            commands::run_tasks_auto,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

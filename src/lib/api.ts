@@ -4,6 +4,7 @@ import type {
   AccountRecord,
   AppStatus,
   AutoRotateConfig,
+  AutoTasksConfig,
   CodeBuddyCliInstallResult,
   CodeBuddyCliStatus,
   CodeBuddyCliSwitchResult,
@@ -437,6 +438,24 @@ export function acceptAllTasks(accountId: string): Promise<{ ok: boolean; result
 
 export function claimAllTasks(accountId: string): Promise<{ ok: boolean; result: unknown }> {
   return call("claim_all_tasks", { accountId });
+}
+
+export function getAutoTasksConfig(): Promise<AutoTasksConfig> {
+  return call("get_auto_tasks_config");
+}
+
+export function saveAutoTasksConfig(config: AutoTasksConfig): Promise<AutoTasksConfig> {
+  return call("save_auto_tasks_config", {
+    config: config as unknown as Record<string, unknown>,
+  });
+}
+
+export function getTasksLogs(): Promise<{ logs: Array<Record<string, unknown>> }> {
+  return call("get_tasks_logs");
+}
+
+export function runTasksAuto(): Promise<{ status: string; accepted?: number; claimed?: number }> {
+  return call("run_tasks_auto");
 }
 
 export function getAutoCheckinConfig(): Promise<CheckinConfig> {

@@ -89,11 +89,6 @@ async fn fetch_tasks(account: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// 任务状态：claimed=true 表示已完成（奖励已领），其余视为「未完成」。
-fn is_claimed(task: &Value) -> bool {
-    task.get("accept_status").and_then(|v| v.as_str()) == Some("claimed")
-}
-
 /// 解析任务响应，返回未完成统计（对齐页面「未完成任务 N」）。
 fn summarize_tasks(tasks: &[Value]) -> Value {
     let total = tasks.len();
@@ -233,6 +228,66 @@ pub async fn claim_all_tasks(account: &Value) -> Value {
             "errors": errors,
         },
     })
+}
+
+/// 返回成长任务自动执行配置（供前端读写）。
+pub fn auto_tasks_config_value() -> Value {
+    crate::modules::config::load_tasks_config()
+}
+
+/// 成长任务自动执行：遍历所有账号，按配置执行「接受未接受」与「领取可领取」。
+/// 返回汇总结果并写入日志（供账号页/设置查看）。
+pub async fn run_tasks_auto_cycle(trigger: &str) -> Value {
+    let cfg = crate::modules::config::load_tasks_config();
+    if cfg.get("enabled").and_then(|v| v.as_bool()) != Some(true) {
+        return json!({"status": "disabled"});
+    }
+    let accept_on = cfg.get("accept_enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    let claim_on = cfg.get("claim_enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    let accounts = crate::modules::account::load_accounts();
+    let mut per_account: Vec<Value> = Vec::new();
+    let mut total_accepted = 0_u64;
+    let mut total_claimed = 0_u64;
+    let mut errors = 0_u64;
+
+    for acc in accounts {
+        let email = account_display_name(&acc);
+        let mut entry = json!({ "email": email });
+        if accept_on {
+            let r = accept_all_tasks(&acc).await;
+            let res = r.get("result").cloned().unwrap_or_else(|| json!({}));
+            let accepted = res.get("accepted").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+            let failed = res.get("failed").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+            entry["accepted"] = json!(accepted);
+            if failed > 0 {
+                errors = errors.saturating_add(failed as u64);
+            }
+            total_accepted = total_accepted.saturating_add(accepted as u64);
+        }
+        if claim_on {
+            let r = claim_all_tasks(&acc).await;
+            let res = r.get("result").cloned().unwrap_or_else(|| json!({}));
+            let claimed = res.get("claimed").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+            let errs = res.get("errors").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+            entry["claimed"] = json!(claimed);
+            errors = errors.saturating_add(errs as u64);
+            total_claimed = total_claimed.saturating_add(claimed as u64);
+        }
+        per_account.push(entry);
+    }
+
+    let summary = json!({
+        "status": "ok",
+        "trigger": trigger,
+        "at": crate::modules::config::now_ms(),
+        "accepted": total_accepted,
+        "claimed": total_claimed,
+        "errors": errors,
+        "accounts": per_account,
+    });
+    crate::modules::config::append_tasks_log(&summary);
+    summary
 }
 
 #[cfg(test)]

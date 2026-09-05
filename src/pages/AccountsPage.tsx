@@ -34,7 +34,7 @@ import { ImportAccountsDialog } from "@/components/import-accounts-dialog";
 import { OAuthLoginDialog } from "@/components/oauth-login-dialog";
 import { SwitchAccountDialog } from "@/components/switch-account-dialog";
 import * as api from "@/lib/api";
-import type { AccountMeta, AppStatus, CheckinConfig, CodeBuddyCliStatus, CreditExpiry } from "@/lib/types";
+import type { AccountMeta, AppStatus, AutoTasksConfig, CheckinConfig, CodeBuddyCliStatus, CreditExpiry } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAccountsStore } from "@/stores/accounts";
 
@@ -140,6 +140,9 @@ export default function AccountsPage() {
   const [importing, setImporting] = useState(false);
   const [autoCheckinConfig, setAutoCheckinConfig] = useState<CheckinConfig | null>(null);
   const [autoCheckinSaving, setAutoCheckinSaving] = useState(false);
+  /** 成长任务自动执行配置（接受未接受 + 领取可领取） */
+  const [autoTasksConfig, setAutoTasksConfig] = useState<AutoTasksConfig | null>(null);
+  const [autoTasksSaving, setAutoTasksSaving] = useState(false);
   /** 账号 id -> 今日是否已签到（undefined=查询中/未知） */
   const [checkinMap, setCheckinMap] = useState<Record<string, boolean>>({});
   /** 账号 id -> 成长中心可完成任务数（undefined=未知/不支持） */
@@ -193,6 +196,21 @@ export default function AccountsPage() {
         if (!cancelled) {
           toast.error("自动签到配置加载失败", { description: api.asError(e) });
         }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .getAutoTasksConfig()
+      .then((config) => {
+        if (!cancelled) setAutoTasksConfig(config);
+      })
+      .catch(() => {
+        /* 桌面端不支持时静默 */
       });
     return () => {
       cancelled = true;
@@ -295,6 +313,22 @@ export default function AccountsPage() {
       toast.error("自动签到设置保存失败", { description: api.asError(e) });
     } finally {
       setAutoCheckinSaving(false);
+    }
+  }
+
+  async function onAutoTasksChange(enabled: boolean) {
+    if (!autoTasksConfig || autoTasksSaving) return;
+    const previous = autoTasksConfig;
+    const next = { ...previous, enabled };
+    setAutoTasksConfig(next);
+    setAutoTasksSaving(true);
+    try {
+      setAutoTasksConfig(await api.saveAutoTasksConfig(next));
+    } catch (e) {
+      setAutoTasksConfig(previous);
+      toast.error("自动任务设置保存失败", { description: api.asError(e) });
+    } finally {
+      setAutoTasksSaving(false);
     }
   }
 
@@ -676,6 +710,21 @@ export default function AccountsPage() {
           </div>
           <TooltipProvider delayDuration={400}>
             <div className="ml-auto flex items-center gap-1">
+              <div className="mr-1 flex items-center gap-2.5">
+                <label htmlFor="accounts-auto-tasks" className="cursor-pointer text-xs font-medium text-muted-foreground" title="自动接受未接受任务并领取可领取奖励">
+                  自动任务
+                </label>
+                <DemoAction>
+                  <Switch
+                    id="accounts-auto-tasks"
+                    checked={autoTasksConfig?.enabled ?? false}
+                    disabled={!autoTasksConfig || autoTasksSaving}
+                    onCheckedChange={(enabled) => void onAutoTasksChange(enabled)}
+                    aria-label="自动任务（接受+领取）"
+                  />
+                </DemoAction>
+                {autoTasksSaving && <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-label="正在保存自动任务设置" />}
+              </div>
               <div className="mr-1 flex items-center gap-2.5">
                 <label htmlFor="accounts-auto-checkin" className="cursor-pointer text-xs font-medium text-muted-foreground">
                   自动签到
