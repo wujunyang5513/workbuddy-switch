@@ -30,6 +30,9 @@ pub const CHECKIN_LOG_MAX_RECORDS: usize = 500;
 /// UA 模拟官方桌面客户端（Electron）的网络栈。
 pub const HTTP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+/// 派猫猫旅行接口前缀（成长中心，非 /v2/plugin 体系，直接挂在 API 域名下）。
+pub const TRAVEL_API_PREFIX: &str = "/activity/growth/buddy/travel";
+
 static CHECKIN_LOG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 pub const ROTATE_LOG_MAX_RECORDS: usize = 200;
@@ -130,6 +133,35 @@ pub fn save_workbuddy_exe_cache(exe: &Path) -> std::io::Result<()> {
 
 pub fn clear_workbuddy_exe_cache() {
     let _ = std::fs::remove_file(workbuddy_exe_cache_file());
+}
+
+pub fn codebuddy_cn_app_cache_file() -> PathBuf {
+    store_dir().join("codebuddy_cn_app.json")
+}
+
+fn parse_codebuddy_cn_app_cache_json(text: &str) -> Option<PathBuf> {
+    parse_workbuddy_exe_cache_json(text)
+}
+
+/// 读取上次成功解析到的 CodeBuddy CN 应用路径；损坏或空文件视为无缓存。
+pub fn load_codebuddy_cn_app_cache() -> Option<PathBuf> {
+    let f = codebuddy_cn_app_cache_file();
+    if !f.exists() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&f).ok()?;
+    parse_codebuddy_cn_app_cache_json(&text)
+}
+
+pub fn save_codebuddy_cn_app_cache(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(store_dir())?;
+    let content =
+        serde_json::to_string_pretty(&json!({ "exe": path.to_string_lossy() })).unwrap_or_default();
+    atomic_write(&codebuddy_cn_app_cache_file(), &content)
+}
+
+pub fn clear_codebuddy_cn_app_cache() {
+    let _ = std::fs::remove_file(codebuddy_cn_app_cache_file());
 }
 
 // ---------------------------------------------------------------------------
@@ -1031,5 +1063,32 @@ mod tests {
         assert!(parse_workbuddy_exe_cache_json("not-json").is_none());
         assert!(parse_workbuddy_exe_cache_json(r#"{ "exe": "  " }"#).is_none());
         assert!(parse_workbuddy_exe_cache_json("{}").is_none());
+    }
+
+    #[test]
+    fn parse_codebuddy_cn_app_cache_json_reads_exe() {
+        let path = parse_codebuddy_cn_app_cache_json(
+            r#"{ "exe": "/Applications/CodeBuddy CN.app" }"#,
+        )
+        .expect("valid cache");
+        assert_eq!(path.to_string_lossy(), "/Applications/CodeBuddy CN.app");
+    }
+
+    #[test]
+    fn parse_codebuddy_cn_app_cache_json_ignores_corrupt_and_empty() {
+        assert!(parse_codebuddy_cn_app_cache_json("not-json").is_none());
+        assert!(parse_codebuddy_cn_app_cache_json(r#"{ "exe": "  " }"#).is_none());
+        assert!(parse_codebuddy_cn_app_cache_json("{}").is_none());
+    }
+
+    #[test]
+    fn codebuddy_cn_app_cache_file_is_not_workbuddy_exe_cache() {
+        assert_ne!(
+            codebuddy_cn_app_cache_file(),
+            workbuddy_exe_cache_file()
+        );
+        assert!(codebuddy_cn_app_cache_file()
+            .file_name()
+            .is_some_and(|n| n == "codebuddy_cn_app.json"));
     }
 }

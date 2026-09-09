@@ -30,6 +30,8 @@ fn spawn_background_loops() {
         }
     });
 
+    // 派猫猫旅行（我们 fork 的自研实现，见下方「每日定时派遣/领取」循环）。
+
     tauri::async_runtime::spawn(async move {
         let mut last_keepalive_day = String::new();
         let mut last_rotate_at: i64 = 0;
@@ -154,6 +156,9 @@ pub fn run() {
             commands::get_codebuddy_cli_status,
             commands::install_codebuddy_cli_helper,
             commands::switch_codebuddy_cli_account,
+            commands::get_codebuddy_cn_ide_status,
+            commands::switch_codebuddy_cn_ide_account,
+            commands::detect_codebuddy_cn_ide_account,
             commands::delete_account,
             commands::oauth_start,
             commands::oauth_status,

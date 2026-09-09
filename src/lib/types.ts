@@ -162,6 +162,19 @@ export interface CheckinResult {
   error?: string;
 }
 
+export interface TravelConfig {
+  enabled: boolean;
+}
+
+export type TravelStatusLabel = "untraveled" | "no-buddy" | "traveling" | "finished";
+
+export interface TravelStatus {
+  label: TravelStatusLabel;
+  rewardCredit: number | null;
+  locationName?: string | null;
+  arriveAt?: number | null;
+}
+
 export interface AutoRotateConfig {
   enabled: boolean;
   check_interval_minutes: number;
@@ -417,6 +430,29 @@ export interface UpdateInfo {
   message?: string;
 }
 
+/** CodeBuddy CN IDE（桌面客户端）状态；与 CodeBuddy CLI 独立。 */
+export interface CodeBuddyCnIdeStatus {
+  installed: boolean;
+  running: boolean;
+  dataDir: string | null;
+  dbPath: string | null;
+  dbExists: boolean;
+  appPath: string | null;
+  activeAccountId: string | null;
+  activeAccountName: string | null;
+  detectedFrom?: string;
+  statePath?: string;
+}
+
+export interface CodeBuddyCnIdeSwitchResult {
+  ok: boolean;
+  account: string;
+  accountId: string;
+  dbPath?: string;
+  restarted?: boolean;
+  message?: string;
+}
+
 /** 猫猫旅行状态（脱敏，来自 /activity/growth/buddy/travel/status）。 */
 export interface TravelState {
   ok: boolean;
@@ -509,3 +545,4 @@ export interface AvailableTasks {
     error?: string;
   };
 }
+
