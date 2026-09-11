@@ -24,18 +24,20 @@ pub const CHECKIN_LOG_MAX_RECORDS: usize = 500;
 
 /// 默认 User-Agent。
 ///
-/// 2026-08-31 起服务端（www.codebuddy.cn）新增 WAF 规则：拦截不带浏览器
-/// User-Agent 的请求（HTTP 403 / code=10085 "请求不合法"）。reqwest 默认
-/// 不发送 UA，导致积分查询、签到、用量等全部接口被拦；这里统一携带浏览器
-/// UA 模拟官方桌面客户端（Electron）的网络栈。
-pub const HTTP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-
 /// 派猫猫旅行接口前缀（成长中心，非 /v2/plugin 体系，直接挂在 API 域名下）。
 pub const TRAVEL_API_PREFIX: &str = "/activity/growth/buddy/travel";
 
 static CHECKIN_LOG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 pub const ROTATE_LOG_MAX_RECORDS: usize = 200;
+
+/// 官网套餐页桌面 Chrome UA（plans-usage 捕获）。
+///
+/// 2026-08-31 起服务端（www.codebuddy.cn）新增 WAF 规则：拦截不带浏览器
+/// User-Agent 的请求（HTTP 403 / code=10085 "请求不合法"）。reqwest 默认
+/// 不发送 UA，导致积分查询、签到、用量等全部接口被拦；这里统一携带官网
+/// 桌面客户端的 UA 指纹，避免被网关判定为未知客户端。
+pub const DEFAULT_HTTP_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36";
 
 // ---------------------------------------------------------------------------
 // 路径
@@ -695,11 +697,15 @@ pub fn norm_ts(v: Option<&Value>) -> Option<i64> {
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
+fn http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent(DEFAULT_HTTP_USER_AGENT)
+}
+
 fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .user_agent(HTTP_USER_AGENT)
-            .timeout(std::time::Duration::from_secs(30))
+        http_client_builder()
             .build()
             .expect("failed to build reqwest client")
     })
@@ -730,9 +736,7 @@ pub async fn http_request_with_proxy(
 ) -> Value {
     let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
     let client = match proxy.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(proxy) => match reqwest::Client::builder()
-            .user_agent(HTTP_USER_AGENT)
-            .timeout(std::time::Duration::from_secs(30))
+        Some(proxy) => match http_client_builder()
             .proxy(match reqwest::Proxy::all(proxy) {
                 Ok(proxy) => proxy,
                 Err(e) => return json!({"code": -1, "message": format!("代理地址无效: {e}")}),
@@ -789,13 +793,10 @@ pub async fn http_request_raw(
     let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
     let client = match proxy.map(str::trim).filter(|value| !value.is_empty()) {
         Some(proxy) => {
-            let mut builder = reqwest::Client::builder()
-                .user_agent(HTTP_USER_AGENT)
-                .timeout(std::time::Duration::from_secs(30))
-                .proxy(match reqwest::Proxy::all(proxy) {
-                    Ok(proxy) => proxy,
-                    Err(e) => return (0, HashMap::new(), format!("代理地址无效: {e}")),
-                });
+            let mut builder = http_client_builder().proxy(match reqwest::Proxy::all(proxy) {
+                Ok(proxy) => proxy,
+                Err(e) => return (0, HashMap::new(), format!("代理地址无效: {e}")),
+            });
             if !follow_redirects {
                 builder = builder.redirect(reqwest::redirect::Policy::none());
             }
@@ -808,9 +809,7 @@ pub async fn http_request_raw(
             if follow_redirects {
                 http_client().clone()
             } else {
-                match reqwest::Client::builder()
-                    .user_agent(HTTP_USER_AGENT)
-                    .timeout(std::time::Duration::from_secs(30))
+                match http_client_builder()
                     .redirect(reqwest::redirect::Policy::none())
                     .build()
                 {
@@ -1090,5 +1089,14 @@ mod tests {
         assert!(codebuddy_cn_app_cache_file()
             .file_name()
             .is_some_and(|n| n == "codebuddy_cn_app.json"));
+    }
+
+    #[test]
+    fn default_http_user_agent_matches_official_chrome_desktop() {
+        assert_eq!(
+            DEFAULT_HTTP_USER_AGENT,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+        );
+        let _ = http_client_builder();
     }
 }
