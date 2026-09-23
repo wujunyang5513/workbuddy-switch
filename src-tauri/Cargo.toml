@@ -24,6 +24,13 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# 本地补丁（非上游）：indexmap 1.x 的 build.rs 用 autocfg 起子进程探测 std，
+# 本机 MSVC 构建环境下 spawn 管道失败（os error 231 All pipe instances are busy），
+# 导致 has_std 未设置 → IndexMap 失去默认泛型参数 → schemars 0.8.22
+# （tauri-build 的 build-dependency）编译报 E0107。
+# 显式开启 std feature 后 build.rs 走 CARGO_FEATURE_STD 分支直接 emit，不再探测。
+# 上游 tauri-build 升级时若不再依赖 schemars 0.8.x，此行可删。
+indexmap = { version = "1.9", features = ["std"] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "custom-protocol"] }
