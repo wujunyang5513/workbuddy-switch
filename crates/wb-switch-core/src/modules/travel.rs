@@ -11,7 +11,7 @@
 
 use serde_json::{json, Value};
 
-use crate::modules::account::{account_display_name, build_auth_headers};
+use crate::modules::account::{account_display_name, build_auth_headers, envelope_token_error};
 use crate::modules::config::{http_request, WORKBUDDY_API_ENDPOINT};
 use crate::modules::refresh::{ensure_fresh_token, refresh_account_token};
 
@@ -37,6 +37,10 @@ fn is_unauthorized(resp: &Value) -> bool {
 
 /// 发送旅行接口请求；遇到未授权且存在 refresh token 时刷新一次并重试。
 async fn travel_request(path: &str, account: &Value, body: Option<Value>) -> Value {
+    // 加密信封凭据短路：不发空 Bearer，直接给出可读错误（issue #94，自上游 0.1.47 移植）。
+    if let Some(err) = envelope_token_error(account) {
+        return json!({"code": -2, "message": err});
+    }
     let url = format!("{WORKBUDDY_API_ENDPOINT}{TRAVEL_PREFIX}{path}");
     let headers = build_auth_headers(account);
     let mut resp = http_request(&url, "POST", body.clone().or(Some(json!({}))), Some(&headers)).await;
@@ -366,4 +370,24 @@ pub async fn claim_all_for(trigger: &str) -> Value {
     let summary = build_travel_summary("claim", results);
     record_travel_log("claim", trigger, &summary);
     summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归 issue #94（自上游 0.1.47 移植）：信封凭据的旅行请求应在入口短路
+    /// 并返回可读错误，不发出空 Bearer。
+    #[tokio::test]
+    async fn envelope_credentials_short_circuit_before_request() {
+        let account = json!({
+            "id": "envelope-only",
+            "access_token": {"$wbEncrypted": true, "envelope": "…"},
+            "refresh_token": {"$wbEncrypted": true, "envelope": "…"},
+        });
+        let resp = travel_request("/status", &account, Some(json!({}))).await;
+        assert_eq!(resp["code"], -2);
+        let msg = resp["message"].as_str().expect("message 应为字符串");
+        assert!(msg.contains("信封"), "错误文案应可读：{msg}");
+    }
 }
