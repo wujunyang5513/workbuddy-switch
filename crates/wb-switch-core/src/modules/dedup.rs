@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use crate::modules::config::now_ms;
 use crate::modules::session::workbuddy_db_path;
+use crate::modules::variant::WbVariant;
 
 /// 一组重复会话。
 struct DupGroup {
@@ -83,7 +84,7 @@ fn table_exists(conn: &Connection, name: &str) -> bool {
 /// ```
 /// 若当前账号无任何会话，`uid` 为 null。
 pub fn dedup_preview(uid: Option<String>) -> Value {
-    let db = workbuddy_db_path();
+    let db = workbuddy_db_path(WbVariant::Cn);
     if !db.is_file() {
         return json!({ "ok": false, "error": "未找到 workbuddy.db" });
     }
@@ -96,7 +97,7 @@ pub fn dedup_preview(uid: Option<String>) -> Value {
 
     let uid = match uid {
         Some(u) if !u.trim().is_empty() => u,
-        _ => match crate::modules::session::current_user_uid() {
+        _ => match crate::modules::session::current_user_uid(WbVariant::Cn) {
             Some(u) => u,
             None => return json!({ "ok": false, "error": "无法确定当前账号" }),
         },
@@ -116,7 +117,7 @@ pub fn dedup_preview(uid: Option<String>) -> Value {
 
 /// 执行软删，返回实际删除结果。入参结构与 `dedup_preview` 相同。
 pub fn dedup_execute(uid: Option<String>) -> Value {
-    let db = workbuddy_db_path();
+    let db = workbuddy_db_path(WbVariant::Cn);
     if !db.is_file() {
         return json!({ "ok": false, "error": "未找到 workbuddy.db" });
     }
@@ -132,7 +133,7 @@ pub fn dedup_execute(uid: Option<String>) -> Value {
 
     let uid = match uid {
         Some(u) if !u.trim().is_empty() => u,
-        _ => match crate::modules::session::current_user_uid() {
+        _ => match crate::modules::session::current_user_uid(WbVariant::Cn) {
             Some(u) => u,
             None => return json!({ "ok": false, "error": "无法确定当前账号" }),
         },

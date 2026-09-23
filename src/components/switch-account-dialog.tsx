@@ -426,7 +426,7 @@ export function SwitchAccountDialog({ open, onOpenChange, account, onDone }: Pro
                 {result.sessionMigrate
                   ? ` 已迁移 ${result.sessionMigrate.migrated.length} 个会话（UPDATE 改归属，原账号已无这些会话）`
                   : result.sessionCopy
-                    ? ` 已复制 ${result.sessionCopy.copied.length} 个会话`
+                    ? ` 已复制 ${result.sessionCopy.copied?.length ?? 0} 个会话`
                     : ""}
                 {result.backup ? ` 认证文件备份：${result.backup}` : ""}
                 {result.sessionMigrate?.backup

@@ -80,7 +80,7 @@ async function fetchTodayCheckinMap(
     accountIds.map(async (id) => {
       try {
         const res = await api.getCheckinStatus(id);
-        if (isStale?.() || !res.ok) return null;
+        if (isStale?.() || !res.ok || typeof res.todayCheckedIn !== "boolean") return null;
         return [id, res.todayCheckedIn] as const;
       } catch {
         return null;
@@ -402,7 +402,10 @@ export default function AccountsPage() {
       // 刷新该账号的今日签到状态
       try {
         const st = await api.getCheckinStatus(a.id);
-        if (st.ok) setCheckinMap((prev) => ({ ...prev, [a.id]: st.todayCheckedIn }));
+        if (st.ok && typeof st.todayCheckedIn === "boolean") {
+          const todayCheckedIn: boolean = st.todayCheckedIn;
+          setCheckinMap((prev) => ({ ...prev, [a.id]: todayCheckedIn }));
+        }
       } catch {
         /* ignore */
       }

@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
+use crate::modules::variant::WbVariant;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Usage {
     input: u64,
@@ -1116,6 +1118,16 @@ pub fn get_statistics(days: Option<i64>) -> Value {
         source_cached(
             home.join(".workbuddy/projects"),
             "workbuddy",
+            days,
+            cutoff,
+            &mut cache,
+        ),
+        // 国际版（WorkBuddy AI）独立 source：与国内版分开统计，不混算。
+        // 上游实测国际版数据根没有 projects/、只有 sessions/；目录不存在时
+        // files() 返回空集，得到空 source（前端展示空状态）。
+        source_cached(
+            WbVariant::Ai.data_root().join("sessions"),
+            "workbuddy-ai",
             days,
             cutoff,
             &mut cache,
